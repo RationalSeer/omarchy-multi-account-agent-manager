@@ -1,118 +1,79 @@
-# Multi-Account Agent Manager — an Omarchy bar plugin
+<div align="center">
 
-Run more than one subscription per AI coding CLI on the same machine and
-switch, sign in and watch limits from the bar.
+# Multi-Account Agent Manager
 
-Supports **Claude Code, Codex, Grok, Cursor CLI, Gemini CLI and OpenCode**
-out of the box (Copilot and Pi ship as opt-in definitions), and any other
-CLI you describe in a small JSON file.
+**Two subscriptions per AI coding CLI. Switch, sign in, watch limits, rotate — from the Omarchy bar.**
 
-![panel](preview.png)
+Claude Code · Codex · Cursor · Grok · OpenCode · Gemini — and any CLI you describe in a JSON file.
 
-![bar](docs/bar.png)
+[![Omarchy plugin](https://img.shields.io/badge/Omarchy-plugin-7aa2f7)](https://plugins.omarchy.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![validate](https://github.com/RationalSeer/omarchy-multi-account-agent-manager/actions/workflows/validate.yml/badge.svg)](https://github.com/RationalSeer/omarchy-multi-account-agent-manager/actions/workflows/validate.yml)
 
-*Bar: one mark per signed-in tool with the active profile's letter. Panel: chips, per-profile cards with meters, Use / Login / Shell. Tokyo Night shown; every colour follows your Omarchy theme.*
+<img src="preview.png" width="560" alt="The panel: one tab per tool, one card per account with limits and actions">
 
-## What you get
+</div>
 
-- **Bar**: one mark per tool you are signed in to (at least one profile),
-  with the active profile's letter (`α`, `Ω`, …). Tools with no login stay
-  out of the bar until you sign one in from the panel (`barShowUnsigned`
-  shows them anyway). The letter turns urgent when the active profile needs
-  a login, and accent when one of its limits is past the warning threshold.
-- **Panel**: one tab per tool (mark, active letter, tint), and for the
-  selected tool one card per account with masked email, plan, session/weekly
-  meters and reset times. **Login** is always visible; **Use**, **Launch**
-  (open the CLI on that account) and **Shell** appear when you hover or move
-  the cursor onto a card. The `● Alpha` pill cycles the tool's active
-  account. Keys: `j`/`k` select, `Enter` use, `o` launch, `i` sign in,
-  `t` terminal, `h`/`l` previous/next tool, `a` all tools / one tab,
-  `r` refresh, `s` settings, `e` edit the registry, `?` legend, `Esc`
-  back/close. Accounts whose CLI publishes no limits (Grok, Cursor, Gemini)
-  get an activity meter instead — today's prompts/tokens against the busiest
-  day of the week, estimated from local session files.
-- **Your names**: accounts start as *Alpha* / *Omega* but are yours to name —
-  Main / Alt, Work / Personal, a client's name — with any one- or two-character
-  badge for the bar. Settings → Accounts renames, adds and forgets accounts;
-  `agent-acct rename` / `add` / `remove` do the same from a terminal.
-- **Settings page** (gear or `s`): alert and auto-rotate thresholds as
-  sliders, notifications on/off, per-tool auto-rotate and in-bar switches,
-  email display, bar options, the setup checklist with Run/Remove, and the
-  registry editor. Every control writes through `agent-acct config` or
-  `omarchy bar set`, so the CLI and Omarchy's own settings stay the source of
-  truth.
+---
 
-  ![settings page](docs/settings.png)
-- **Alerts**: a notification when an account's window crosses the warning
-  threshold (default 85 %), once per crossing — and, optionally, one when a
-  window you were warned about resets, so you remember to switch back.
-- **Auto-rotate** (opt-in per tool, `󰑐 auto` chip): when the active profile
-  passes the rotate threshold (default 90 %) and another signed-in profile has
-  headroom, the tool switches to it. New launches only — running sessions
-  never change.
-- **Stock Agents panel integration**: Omarchy's own `omarchy.agents` widget
-  shows one tab per account ("Claude α", "Codex Ω") with its full charts,
-  because this plugin writes per-account usage records in the format the
-  stock collectors use. Accounts appear there once they have recorded usage.
+## Why
 
-  ![stock Agents panel with one tab per profile](docs/stock-agents-tabs.png)
-- **CLI**: everything the bar does is `agent-acct …` in a terminal.
+Rate limits are per account. If you keep a second subscription for the days
+the first one runs dry, you end up juggling `CLAUDE_CONFIG_DIR`, `CODEX_HOME`
+and friends by hand and never quite knowing which account a terminal will
+use. This plugin makes the *account* a first-class thing in the bar: see which
+one is live per tool, how much of its window is used, switch with a click, and
+optionally let it rotate for you at the limit.
 
-## Install
+## What you see
+
+| | |
+|---|---|
+| <img src="docs/bar.png" alt="bar"> | **Bar** — one mark per tool you are signed in to, with the live account's badge (`α`, `Ω`, or whatever you name them). Urgent colour when that account needs a login; accent when a limit is past your threshold. Left-click opens the panel, middle-click cycles Claude, scroll cycles Codex, right-click opens a terminal with the active accounts' environment. |
+| <img src="preview.png" alt="panel"> | **Panel** — a tab per tool, and for the selected tool one card per account: masked email, plan, session/weekly meters with reset times. **Login** is always there; **Use**, **Launch** and **Shell** appear on hover. The `● Alpha` pill cycles the active account. Tools without published limits (Grok, Cursor, Gemini) show an activity meter — today against the week's busiest day — estimated from local session files. |
+| <img src="docs/settings.png" alt="settings"> | **Settings** (gear or `s`) — warn/rotate thresholds as sliders, notifications, per-tool auto-rotate and in-bar switches, **account names and badges**, add/forget accounts, email display, bar options, the setup checklist, and the registry editor. |
+| <img src="docs/stock-agents-tabs.png" alt="stock Agents panel"> | **Omarchy's own Agents panel** grows one tab per account ("Claude α", "Codex Ω") with its full charts — this plugin writes per-account usage records in the format the stock collectors use, so nothing is drawn twice. |
+
+## Quick start
 
 ```bash
 omarchy plugin add https://github.com/RationalSeer/omarchy-multi-account-agent-manager --enable
 ```
 
-The widget works immediately. Open the panel and press **Run setup** (or run
-`agent-acct setup` after the first step) to add the optional, reversible
-wiring:
+1. The icon appears in the bar as soon as one supported CLI is signed in. Open the panel.
+2. Press the gear → **Run setup** (optional, reversible — see below). This is what makes a switch reach every terminal and keybind launch.
+3. Pick a tool's second row (*Omega* by default) and press **Login**; the CLI's own sign-in runs in a terminal.
+4. Rename the accounts to whatever fits — Main / Alt, Work / Personal — in Settings → Accounts.
+5. Click **Use** on an account, or turn on **auto-rotate** for the tool and forget about it.
+
+Everything the panel does is also `agent-acct …` in a terminal (`agent-acct --help`).
+
+## Keys
+
+| Key | Action | | Key | Action |
+|---|---|---|---|---|
+| `j` / `k` | select account | | `h` / `l` | previous / next tool |
+| `Enter` | use this account for new launches | | `a` | all tools at once / one tab |
+| `o` | launch the CLI on it | | `r` | refresh usage |
+| `i` | sign in | | `s` | settings |
+| `t` | terminal with its environment | | `e` | edit the registry |
+| `?` | this legend | | `Esc` | back / close |
+
+## Setup — what it wires, what it touches
+
+The widget works immediately. **Run setup** adds the optional wiring, each step shown with ✓/✗ and each reversible with `agent-acct setup --remove`:
 
 | Step | What it does | Undo |
 |---|---|---|
-| Registry | `~/.config/agent-accounts/accounts.json`, one *Alpha* profile per discovered CLI (your current login) and an empty *Omega* | delete |
+| Registry | `~/.config/agent-accounts/accounts.json`: one *Alpha* account per discovered CLI (your current login) and an empty *Omega* | delete |
 | PATH | `~/.local/bin/agent-acct` → the plugin's `bin/agent-acct` | `setup --remove` |
 | Bash hook | two lines in `~/.bashrc`; new **and already-open** terminals follow a switch at their next prompt, never overriding a value you exported yourself | `setup --remove` |
-| Session env | `~/.config/uwsm/env.d/20-agent-accounts` so keybind / menu launches start with the active profiles; `use` also pushes the env into the running Hyprland session via `hyprctl` | `setup --remove` |
-| Timer | `systemd --user` timer refreshing usage every 15 min | `setup --remove` |
-| Stock tabs | hides the stock single Claude/Codex tabs so profiles are not shown twice | `setup --remove` |
+| Session env | `~/.config/uwsm/env.d/20-agent-accounts` so keybind / menu launches start on the active accounts; `use` also pushes the env into the running Hyprland session | `setup --remove` |
+| Timer | `systemd --user` timer refreshing usage every 15 minutes | `setup --remove` |
+| Stock tabs | hides the stock single-account Claude/Codex tabs so accounts are not shown twice | `setup --remove` |
 
-`agent-acct setup --remove --purge` also deletes the registry, slots and
-records. Your CLIs' own directories are never touched.
-
-## Remove
-
-```bash
-agent-acct setup --remove          # undo the optional wiring (keeps your profiles)
-agent-acct setup --remove --purge  # also delete the registry, slots and usage records
-omarchy plugin remove io.github.rationalseer.multi-account-agent-manager
-```
-
-Your CLIs' own directories (`~/.claude`, `~/.codex`, …) and any `-omega`
-profile directories are never deleted; remove those yourself if you no longer
-want the second account's data.
-
-## Keybindings
-
-Anything the panel does is one IPC call away, so it binds like any Omarchy
-command. In `~/.config/hypr/bindings.lua`:
-
-```lua
-o.bind("SUPER + SHIFT + A", "Agent accounts", "omarchy-shell io.github.rationalseer.multi-account-agent-manager toggle")
-o.bind("SUPER + SHIFT + C", "Next Claude account", "omarchy-shell io.github.rationalseer.multi-account-agent-manager next claude")
-o.bind("SUPER + SHIFT + X", "Launch Codex on the active account", "agent-acct launch codex")
-```
-
-`agent-acct launch <tool> [<account>]` opens the CLI itself in a terminal on
-that account (switching a link-mode tool first if needed); `agent-acct shell`
-opens a plain terminal with the account's environment.
-
-## Updates
-
-`omarchy plugin update` pulls the new version. The bash hook, session env
-file and timer are regenerated automatically the next time the widget loads
-if you had run setup before; nothing is installed for people who never
-opted in.
+Nothing outside your home directory is touched. **No sudo or pkexec is required.**
+After `omarchy plugin update`, the wiring is regenerated automatically on the next panel load — only if you had run setup before.
 
 ## How a switch works
 
@@ -120,30 +81,55 @@ Every tool is one of two kinds:
 
 - **env** (Claude, Codex, Grok, Gemini): the CLI reads its config directory
   from an environment variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-  `GROK_HOME`, `GEMINI_CLI_HOME`). A profile is a directory; Alpha is the
-  CLI's default one, Omega is `~/.<tool>-omega` with shared config
-  (`settings.json`, skills, …) symlinked from Alpha. `use` rewrites
+  `GROK_HOME`, `GEMINI_CLI_HOME`). An account is a directory: the first one is
+  the CLI's default, the second is `~/.<tool>-<account>` with shared config
+  (`settings.json`, skills, …) symlinked from the first. `use` rewrites
   `active.env`; the bash hook and the session env carry it. Explicit values
-  always win, and `claude-omega` / `codex-alpha` aliases give one-off
+  always win, and `claude-omega` / `codex-alpha` style aliases give one-off
   overrides.
 - **link** (Cursor, OpenCode): the CLI reads one fixed auth file
-  (`~/.config/cursor/auth.json`, `~/.local/share/opencode/auth.json`). A
-  profile is a slot under `~/.config/agent-accounts/slots/`, and the fixed
-  path is a symlink that `use` re-points. **Login** makes the profile active
+  (`~/.config/cursor/auth.json`, `~/.local/share/opencode/auth.json`). An
+  account is a slot under `~/.config/agent-accounts/slots/`, and the fixed
+  path is a symlink that `use` re-points. **Login** makes the account active
   first so the sign-in lands in the right slot. *Switch these with no session
   of that tool open* — a running session that refreshes its token would write
   it into whichever slot is linked at that moment.
 
-Running sessions of any tool keep the account they started with.
+Running sessions of any tool keep the account they started with. A switch is
+for the next launch.
+
+## Alerts and auto-rotate
+
+- **Warn** (default 85 %): one notification per crossing, per account and
+  window; also tints the bar badge.
+- **Reset notice** (on by default): when a window you were warned about
+  resets, one notification so you remember to switch back.
+- **Auto-rotate** (per tool, off by default; needs published limits, so
+  Claude and Codex): when the active account passes the rotate threshold
+  (default 90 %) and another signed-in account has headroom, the tool switches
+  to it and notifies. Env-mode tools only; never while it would need to touch
+  a running session.
+
+## Keybindings
+
+Anything the panel does is one IPC call away. In `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + SHIFT + A", "Agent accounts", "omarchy-shell io.github.rationalseer.multi-account-agent-manager toggle")
+o.bind("SUPER + SHIFT + C", "Next Claude account", "omarchy-shell io.github.rationalseer.multi-account-agent-manager next claude")
+o.bind("SUPER + SHIFT + X", "Launch Codex on the active account", "agent-acct launch codex")
+```
+
+IPC: `omarchy-shell io.github.rationalseer.multi-account-agent-manager <open|close|toggle|settings|tab <tool>|refresh|next <tool>|status>`
 
 ## Adding a tool
 
 Drop `~/.config/agent-accounts/tools/<id>.json` (same shape as the files in
-`tools/`; a file with an existing id overrides it):
+[`tools/`](tools); a file with an existing id overrides it):
 
 ```json
 {
-  "id": "foo", "name": "Foo", "bin": "foo",
+  "id": "foo", "name": "Foo", "order": 65, "bin": "foo",
   "mode": "env", "envVar": "FOO_HOME", "defaultDir": "~/.foo",
   "credFile": "auth.json",
   "login": ["foo", "login"], "logout": ["foo", "logout"],
@@ -154,13 +140,15 @@ Drop `~/.config/agent-accounts/tools/<id>.json` (same shape as the files in
 }
 ```
 
-`order` sets the tab position (lower first). `identity.jq` runs over the credential file with `$now` (ms) bound and must
+`identity.jq` runs over the credential file with `$now` (ms) bound and must
 return `{signedIn, email, plan, expiresAt, expired}`. `collector` is
 `stock:<omarchy-agent-usage-…>` for a CLI Omarchy already collects, `local`
-to estimate from session files in `localUsage.dirs`, or `null`. A tool shows
-up only when its binary is on `PATH` and the definition is `enabled`.
+to estimate from session files in `localUsage.dirs` (optional `globs`,
+`sqlite`), or `null`. `order` sets the tab position. A tool shows up only
+when its binary is on `PATH` and the definition is `enabled`. Copilot and Pi
+ship disabled with the reason inside their files.
 
-## Settings
+## Settings reference
 
 `omarchy bar set io.github.rationalseer.multi-account-agent-manager <key> <value> --json`
 
@@ -168,54 +156,61 @@ up only when its binary is on `PATH` and the definition is `enabled`.
 |---|---|---|
 | `statusIntervalSec` | 300 | how often the panel re-reads `agent-acct status` |
 | `limitWarnPercent` | 85 | bar / meter tint threshold |
-| `showGlyphs` | true | show α/Ω letters in the bar |
-| `compactBar` | false | letters only for tools that need attention |
-| `barShowUnsigned` | false | also show tools with no signed-in profile in the bar |
+| `showGlyphs` | true | show account badges in the bar |
+| `compactBar` | false | badges only for tools that need attention |
+| `barShowUnsigned` | false | also show tools with no signed-in account |
 | `emailDisplay` | masked | `masked` (cyc…@example.com), `hidden`, or `full` |
-| `showAllTools` | false | every tool's accounts at once instead of one tab (`a` in the panel) |
+| `showAllTools` | false | every tool's accounts at once instead of one tab |
 
-Thresholds for alerts and auto-rotate live in the registry (the settings page
-edits the same values): `agent-acct config alerts warnAt 0.85`,
-`agent-acct config alerts rotateAt 0.9`, `agent-acct config alerts enabled off`,
-`agent-acct config alerts resetNotify off`, `agent-acct config <tool> autoRotate on`,
-`agent-acct config <tool> barHidden on`.
+Registry-side options (the settings page edits the same values):
+`agent-acct config alerts warnAt 0.85 | rotateAt 0.9 | enabled off | resetNotify off`,
+`agent-acct config <tool> autoRotate on | barHidden on | hidden on`.
+
+## Remove
+
+```bash
+agent-acct setup --remove          # undo the optional wiring (keeps your accounts)
+agent-acct setup --remove --purge  # also delete the registry, slots and usage records
+omarchy plugin remove io.github.rationalseer.multi-account-agent-manager
+```
+
+Your CLIs' own directories (`~/.claude`, `~/.codex`, …) and any second-account
+directories are never deleted; remove those yourself if you no longer want
+that account's data.
 
 ## Privacy and security
 
 - Reads only what it shows: presence/expiry of a credential, the account email
-  (masked by default, `emailDisplay` can hide it entirely) and plan. Tokens are
-  never printed, copied or logged.
+  (masked by default, can be hidden) and plan. Tokens are never printed,
+  copied or logged.
 - No network requests of its own. Rate limits come from Omarchy's stock
   collectors (Claude, Codex); everything else is estimated from local session
   files and labelled as such.
-- No sudo or pkexec is required. Everything lives in your home directory; the
-  only system integration is a `systemd --user` timer that you install
-  yourself with **Run setup** and remove with `agent-acct setup --remove`.
-- Nothing is changed without consent: the widget itself only reads. `setup`
-  (button or command) is the explicit step that edits `~/.bashrc`, adds the
-  session env file and timer, and hides the stock single-account tabs; each
-  step is listed with ✓/✗ and reversible.
+- No sudo or pkexec is required. The only system integration is a
+  `systemd --user` timer you install yourself with **Run setup**.
+- Nothing is changed without consent: the widget only reads until you run
+  setup, and every setup step is listed and reversible.
 - Tool definitions are data, but their `login`/`logout`/`emailCommand` arrays
-  are executed with the profile's environment. Only add definitions under
-  `~/.config/agent-accounts/tools/` that you trust; the plugin never evaluates
-  strings from them as shell code, and profile paths are restricted to a safe
-  character set.
-- Registry, `active.env` and profile slots are created with owner-only
-  permissions (`0600` / `0700`).
+  are executed with the account's environment. Only add definitions you
+  trust; the plugin never evaluates strings from them as shell code, and
+  account paths are restricted to a safe character set.
+- Registry, `active.env` and slots are created owner-only (`0600` / `0700`).
 
 ## Known limits
 
-- The stock Agents widget's own right-click "launch agent" runs from the
-  shell process, whose environment is fixed at session start; it follows a
-  switch only after `omarchy restart shell`. This plugin's Shell button and
-  keybind launches follow immediately.
+- The stock Agents widget's own right-click "launch agent" runs from the shell
+  process, whose environment is fixed at session start; it follows a switch
+  only after `omarchy restart shell`. This plugin's Launch/Shell and keybind
+  launches follow immediately.
 - Copilot stores its token in the system keyring when one exists, which all
-  profiles would share; its definition ships disabled.
+  accounts would share; its definition ships disabled.
 - Local usage estimates depend on each CLI's session format and may be empty.
+- The stock Agents chip row fits about five account tabs before it crowds.
 
-## IPC
+## Contributing
 
-`omarchy-shell io.github.rationalseer.multi-account-agent-manager <open|close|toggle|settings|tab <tool>|refresh|next <tool>|status>`
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Security concerns: [SECURITY.md](SECURITY.md). Changes: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
