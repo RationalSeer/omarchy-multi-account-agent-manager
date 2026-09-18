@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 — 2026-09-18
+
+- Panel v3: one tab per tool instead of stacked sections; Use/Shell appear on
+  hover or cursor; key legend behind a `?` tooltip; the active pill cycles the
+  account. About half the height of v2 with every feature kept.
+- Settings page inside the panel (gear / `s` / IPC `settings`): alert and
+  rotate thresholds, notifications toggle, per-tool auto-rotate and in-bar
+  switches, email display, bar options, setup checklist with Run/Remove,
+  registry editor.
+- `agent-acct config alerts enabled on|off`, `config <tool> barHidden on|off`;
+  status reports `hasLimits` and `barHidden`; auto-rotate is offered only for
+  tools with published limits.
+
 ## 0.3.0 — 2026-09-18
 
 - Usage records use short names ("Codex Ω") so the stock Agents panel's chip

@@ -20,11 +20,21 @@ CLI you describe in a small JSON file.
   out of the bar until you sign one in from the panel (`barShowUnsigned`
   shows them anyway). The letter turns urgent when the active profile needs
   a login, and accent when one of its limits is past the warning threshold.
-- **Panel**: a chip per tool (click = cycle profile), then one card per
-  profile with masked email, plan, session/weekly meters with reset times,
-  and **Use / Login / Shell** actions. Keys: `j`/`k` select, `Enter` use,
-  `i` sign in, `t` terminal, `h`/`l` cycle the row's tool, `r` refresh,
-  `e` edit the registry, `Esc`.
+- **Panel**: one tab per tool (mark, active letter, tint), and for the
+  selected tool one card per account with masked email, plan, session/weekly
+  meters and reset times. **Login** is always visible; **Use** and **Shell**
+  appear when you hover or move the cursor onto a card. The `● Alpha` pill
+  cycles the tool's active account. Keys: `j`/`k` select, `Enter` use,
+  `i` sign in, `t` terminal, `h`/`l` previous/next tool, `r` refresh,
+  `s` settings, `e` edit the registry, `?` legend, `Esc` back/close.
+- **Settings page** (gear or `s`): alert and auto-rotate thresholds as
+  sliders, notifications on/off, per-tool auto-rotate and in-bar switches,
+  email display, bar options, the setup checklist with Run/Remove, and the
+  registry editor. Every control writes through `agent-acct config` or
+  `omarchy bar set`, so the CLI and Omarchy's own settings stay the source of
+  truth.
+
+  ![settings page](docs/settings.png)
 - **Alerts**: a notification when a profile's window crosses the warning
   threshold (default 85 %), once per crossing.
 - **Auto-rotate** (opt-in per tool, `󰑐 auto` chip): when the active profile
@@ -132,9 +142,10 @@ up only when its binary is on `PATH` and the definition is `enabled`.
 | `barShowUnsigned` | false | also show tools with no signed-in profile in the bar |
 | `emailDisplay` | masked | `masked` (cyc…@example.com), `hidden`, or `full` |
 
-Thresholds for alerts and auto-rotate live in the registry:
-`agent-acct config alerts warnAt 0.85`, `agent-acct config alerts rotateAt 0.9`,
-`agent-acct config <tool> autoRotate on`.
+Thresholds for alerts and auto-rotate live in the registry (the settings page
+edits the same values): `agent-acct config alerts warnAt 0.85`,
+`agent-acct config alerts rotateAt 0.9`, `agent-acct config alerts enabled off`,
+`agent-acct config <tool> autoRotate on`, `agent-acct config <tool> barHidden on`.
 
 ## Privacy and security
 
@@ -171,7 +182,7 @@ Thresholds for alerts and auto-rotate live in the registry:
 
 ## IPC
 
-`omarchy-shell io.github.rationalseer.multi-account-agent-manager <open|close|toggle|refresh|next <tool>|status>`
+`omarchy-shell io.github.rationalseer.multi-account-agent-manager <open|close|toggle|settings|refresh|next <tool>|status>`
 
 ## License
 

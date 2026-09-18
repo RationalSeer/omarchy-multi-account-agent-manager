@@ -44,8 +44,9 @@ agent-acct $VERSION — subscription profiles for AI coding CLIs
   shell [<tool> <profile>]...           terminal with those profiles' env (env-mode tools)
   add <tool> <profile> [--dir D] [--label L] [--glyph G]
   remove <tool> <profile>               forget a profile (keeps its files)
-  config <tool> <key> <value>           per-tool option: autoRotate on|off, hidden on|off
+  config <tool> <key> <value>           per-tool option: autoRotate|barHidden|hidden on|off
   config alerts <warnAt|rotateAt> <0-1> alert thresholds (defaults 0.85 / 0.90)
+  config alerts enabled on|off          limit notifications (auto-rotate is per tool)
   usage-update [--force] [<tool>[:<profile>]...]   regenerate usage records, then check alerts
   check                                 evaluate limit alerts / auto-rotate now
   env | apply | aliases | hook          env exports · push into Hyprland · bash aliases · hook path
@@ -291,10 +292,12 @@ profile_status() {
   jq -n --arg tool "$t" --arg name "$(tool_name "$t")" --arg id "$p" --arg label "$(profile_label "$t" "$p")" --arg glyph "$(profile_glyph "$t" "$p")" \
     --arg dir "$d" --arg mode "$(tool_mode "$t")" --argjson hasUsage "$([[ -n $(tool_collector "$t") ]] && echo true || echo false)" \
     --arg loginNote "$(tool_field "$t" loginNote)" --argjson autoRotate "$([[ $(tool_opt "$t" autoRotate) == true ]] && echo true || echo false)" \
+    --argjson barHidden "$([[ $(tool_opt "$t" barHidden) == true ]] && echo true || echo false)" \
+    --argjson hasLimits "$([[ $(tool_collector "$t") == stock:* ]] && echo true || echo false)" \
     --argjson active "$active" --argjson exists "$exists" --argjson managed "$managed" --argjson ident "$ident" --argjson record "$record" \
     --argjson warnAt "$(alert_opt warnAt 0.85)" '
     ($ident.signedIn // false) as $signed | (($record.limits // []) | map(.percent // 0) | max // 0) as $worst |
-    {tool:$tool, toolName:$name, id:$id, label:$label, glyph:$glyph, dir:$dir, mode:$mode, hasUsage:$hasUsage, loginNote:$loginNote, autoRotate:$autoRotate,
+    {tool:$tool, toolName:$name, id:$id, label:$label, glyph:$glyph, dir:$dir, mode:$mode, hasUsage:$hasUsage, hasLimits:$hasLimits, loginNote:$loginNote, autoRotate:$autoRotate, barHidden:$barHidden,
      active:$active, exists:$exists, signedIn:$signed, managed:$managed, email:($ident.email // ""),
      plan: (if ($record.tierLabel // "") != "" then $record.tierLabel else ($ident.plan // "") end),
      expiresAt: ($ident.expiresAt // null), expired: ($ident.expired // false),
@@ -414,10 +417,13 @@ cmd_remove() {
 cmd_config() {
   local t=$1 k=$2 v=$3
   if [[ $t == alerts ]]; then
-    [[ $k == warnAt || $k == rotateAt ]] || die "alerts keys: warnAt rotateAt"
-    reg_read | jq --arg k "$k" --argjson v "$v" '.alerts[$k] = $v' | reg_write
+    case $k in
+    warnAt|rotateAt) [[ $v =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || die "value: 0-1"; reg_read | jq --arg k "$k" --argjson v "$v" '.alerts[$k] = $v' | reg_write ;;
+    enabled) case $v in on|true|1|yes) v=true ;; off|false|0|no) v=false ;; *) die "value: on|off" ;; esac; reg_read | jq --argjson v "$v" '.alerts.enabled = $v' | reg_write ;;
+    *) die "alerts keys: warnAt rotateAt enabled" ;;
+    esac
   else
-    need_tool "$t"; [[ $k == autoRotate || $k == hidden ]] || die "tool keys: autoRotate hidden"
+    need_tool "$t"; [[ $k == autoRotate || $k == hidden || $k == barHidden ]] || die "tool keys: autoRotate barHidden hidden"
     case $v in on|true|1|yes) v=true ;; off|false|0|no) v=false ;; *) die "value: on|off" ;; esac
     reg_read | jq --arg t "$t" --arg k "$k" --argjson v "$v" '.tools[$t][$k] = $v' | reg_write
     write_env
@@ -483,7 +489,7 @@ cmd_check() {
         key="$t:$p:$label"; was=$(jq -r --arg k "$key" '.[$k] // 0' <<<"$st")
         if awk -v a="$pct" -v b="$warn" 'BEGIN{exit !(a>=b)}'; then
           if [[ $was == 0 ]]; then
-            notify "$(tool_name "$t") $(profile_label "$t" "$p"): $label at $(awk -v a="$pct" 'BEGIN{printf "%d", a*100}') %" "$(jq -r --arg l "$label" '.limits[] | select(.label == $l) | .resetsAt // "" | if . == "" then "" else "Resets \(.)" end' "$rec")"
+            [[ $(alert_opt enabled true) == false ]] || notify "$(tool_name "$t") $(profile_label "$t" "$p"): $label at $(awk -v a="$pct" 'BEGIN{printf "%d", a*100}') %" "$(jq -r --arg l "$label" '.limits[] | select(.label == $l) | .resetsAt // "" | if . == "" then "" else "Resets \(.)" end' "$rec")"
             st=$(jq --arg k "$key" '.[$k] = 1' <<<"$st")
           fi
         elif [[ $was != 0 ]]; then st=$(jq --arg k "$key" 'del(.[$k])' <<<"$st"); fi

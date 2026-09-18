@@ -39,9 +39,25 @@ Panel {
   }
   readonly property var barTools: {
     var out = []
-    for (var i = 0; i < tools.length; i++) if (barShowUnsigned || toolSigned(tools[i])) out.push(tools[i])
+    for (var i = 0; i < tools.length; i++) if (!tools[i].barHidden && (barShowUnsigned || toolSigned(tools[i]))) out.push(tools[i])
     return out
   }
+
+  // ---- panel state: which view, which tool tab ----
+  property string view: "accounts"          // "accounts" | "settings"
+  property string selectedToolId: ""
+  readonly property int selectedToolIndex: {
+    for (var i = 0; i < tools.length; i++) if (tools[i].id === selectedToolId) return i
+    return 0
+  }
+  readonly property var selectedTool: tools.length > 0 ? tools[selectedToolIndex] : null
+  readonly property var tabProfiles: selectedTool ? selectedTool.profiles : []
+  function selectTab(index) {
+    if (tools.length === 0) return
+    var i = ((index % tools.length) + tools.length) % tools.length
+    selectedToolId = tools[i].id; cursor = 0
+  }
+  readonly property string legend: "j/k  select account\nEnter  use\ni  sign in\nt  terminal\nh/l  previous / next tool\nr  refresh usage\ns  settings\ne  edit registry\nEsc  back / close"
 
   readonly property var tools: accounts.tools
   readonly property var profiles: accounts.profiles
@@ -49,7 +65,7 @@ Panel {
   // Flat cursor over every profile row, in display order.
   property int cursor: 0
   property bool cursorActive: false
-  readonly property var cursorProfile: profiles.length > 0 ? profiles[clamp(cursor, 0, profiles.length - 1)] : null
+  readonly property var cursorProfile: tabProfiles.length > 0 ? tabProfiles[clamp(cursor, 0, tabProfiles.length - 1)] : null
 
   property double nowMs: Date.now()
   Timer { interval: 30000; running: root.opened; repeat: true; onTriggered: root.nowMs = Date.now() }
@@ -144,7 +160,13 @@ Panel {
   }
 
   // ---- actions ----
-  function moveCursor(dy) { if (profiles.length === 0) return; cursorActive = true; cursor = ((cursor + dy) % profiles.length + profiles.length) % profiles.length }
+  function moveCursor(dy) { if (tabProfiles.length === 0) return; cursorActive = true; cursor = ((cursor + dy) % tabProfiles.length + tabProfiles.length) % tabProfiles.length }
+  function tabIndexOf(p) { for (var i = 0; i < tabProfiles.length; i++) if (tabProfiles[i].id === p.id) return i; return -1 }
+  // widget settings live in shell.json; omarchy-bar set writes them and the shell hot-reloads
+  function setWidgetSetting(key, value, json) {
+    if (!bar) return
+    bar.run("omarchy-bar set " + shellQuote(moduleName) + " " + shellQuote(key) + " " + shellQuote(String(value)) + (json ? " --json" : ""))
+  }
   function useCursor() { var p = cursorProfile; if (p && !p.active) accounts.use(p.tool, p.id) }
   function loginCursor() { var p = cursorProfile; if (p) accounts.login(p.tool, p.id) }
   function shellCursor() { var p = cursorProfile; if (p && p.mode !== "link") accounts.shell(p.tool, p.id) }
@@ -168,6 +190,7 @@ Panel {
     function refresh(): string { root.refreshNow(); return "ok" }
     function next(tool: string): string { root.nextTool(tool); return "ok" }
     function status(): string { return JSON.stringify(root.profiles) }
+    function settings(): void { root.open(); root.view = "settings" }
   }
 
   visible: accounts.available && (root.barTools.length > 0 || root.tools.length > 0)
@@ -267,25 +290,30 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(480))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(720))
+    contentWidth: panel.fittedContentWidth(Style.space(470))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(640))
+    onOpenChanged: if (open) { root.view = "accounts"; if (root.selectedToolId === "" && root.tools.length) root.selectedToolId = root.tools[0].id }
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.view === "settings" && (warnSlider.dragging || rotateSlider.dragging)
 
       onMoveRequested: function(dx, dy) {
+        if (root.view !== "accounts") return
         if (dy !== 0) root.moveCursor(dy)
-        if (dx !== 0) { var p = root.cursorProfile; if (p) root.nextTool(p.tool) }
+        if (dx !== 0) root.selectTab(root.selectedToolIndex + dx)
       }
-      onActivateRequested: root.useCursor()
-      onCloseRequested: root.close()
+      onActivateRequested: if (root.view === "accounts") root.useCursor()
+      onCloseRequested: { if (root.view === "settings") root.view = "accounts"; else root.close() }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "r" || t === "R") root.refreshNow()
-        else if (t === "i" || t === "I") root.loginCursor()
-        else if (t === "t" || t === "T" || t === "s" || t === "S") root.shellCursor()
+        else if (t === "s" || t === "S") root.view = root.view === "settings" ? "accounts" : "settings"
         else if (t === "e" || t === "E") root.openEditor()
+        else if (root.view !== "accounts") return
+        else if (t === "i" || t === "I") root.loginCursor()
+        else if (t === "t" || t === "T") root.shellCursor()
       }
 
       Flickable {
@@ -307,14 +335,14 @@ Panel {
           // ---------- Hero ----------
           PanelHero {
             width: parent.width
-            title: "Multi-Account Agent Manager"
-            meta: root.heroMeta()
+            title: root.view === "settings" ? "Settings" : "Multi-Account Agent Manager"
+            meta: root.view === "settings" ? "alerts · tools · display · setup" : root.heroMeta()
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconComponent: Component {
               Text {
                 textFormat: Text.PlainText
-                text: "󱚣"
+                text: root.view === "settings" ? "󰒓" : "󱚣"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.display
@@ -324,159 +352,26 @@ Panel {
               Row {
                 spacing: Style.spacing.sm
                 PanelActionButton {
-                  iconText: "󰑐"
-                  tooltipText: "Refresh usage (r)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
+                  visible: root.view === "accounts"
+                  iconText: "󰑐"; tooltipText: "Refresh usage (r)"
+                  foreground: root.foreground; fontFamily: root.fontFamily
                   onClicked: root.refreshNow()
                 }
                 PanelActionButton {
-                  iconText: "󰏫"
-                  tooltipText: "Edit accounts.json (e)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  onClicked: root.openEditor()
+                  visible: root.view === "accounts"
+                  iconText: "󰋖"; tooltipText: root.legend
+                  foreground: root.foreground; fontFamily: root.fontFamily
+                }
+                PanelActionButton {
+                  iconText: root.view === "settings" ? "󰁍" : "󰒓"
+                  tooltipText: root.view === "settings" ? "Back (Esc)" : "Settings (s)"
+                  foreground: root.foreground; fontFamily: root.fontFamily
+                  onClicked: root.view = root.view === "settings" ? "accounts" : "settings"
                 }
               }
             }
           }
 
-          // ---------- Setup card: only while something is missing ----------
-          Rectangle {
-            visible: accounts.setupChecked && !accounts.setupComplete
-            width: parent.width
-            implicitHeight: setupCol.implicitHeight + Style.space(12) * 2
-            radius: Style.cornerRadius
-            color: root.alpha(root.urgent, 0.06)
-            border.width: 1
-            border.color: root.alpha(root.urgent, 0.45)
-            Column {
-              id: setupCol
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.top: parent.top
-              anchors.margins: Style.space(12)
-              spacing: Style.space(6)
-              Text {
-                textFormat: Text.PlainText
-                text: "Finish setting up"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
-              }
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: "The widget works as is; these make switches reach every terminal and keybind launch, keep usage fresh, and give you the agent-acct command. All user-space and reversible (agent-acct setup --remove)."
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-              Repeater {
-                model: accounts.setupSteps
-                Row {
-                  required property var modelData
-                  spacing: Style.space(6)
-                  Text {
-                    textFormat: Text.PlainText
-                    text: modelData.ok ? "✓" : "✗"
-                    color: modelData.ok ? root.accent : root.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                  Text {
-                    textFormat: Text.PlainText
-                    text: modelData.label
-                    color: modelData.ok ? root.dim : root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-              }
-              Button {
-                text: "Run setup"
-                iconText: "󰒓"
-                bordered: true
-                selected: true
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
-                onClicked: accounts.runSetup()
-              }
-            }
-          }
-
-          // ---------- Summary strip: one chip per tool, click cycles ----------
-          Grid {
-            id: strip
-            width: parent.width
-            columns: root.tools.length > 4 ? 3 : Math.max(1, root.tools.length)
-            columnSpacing: Style.spacing.md
-            rowSpacing: Style.spacing.md
-            visible: root.tools.length > 0
-            readonly property real cellWidth: (width - columnSpacing * (columns - 1)) / columns
-
-            Repeater {
-              model: root.tools
-              Rectangle {
-                id: chip
-                required property var modelData
-                readonly property var a: modelData.active
-                readonly property string kind: root.activeAttention(modelData)
-                width: strip.cellWidth
-                height: Style.space(44)
-                radius: Style.cornerRadius
-                color: chipMouse.containsMouse ? root.track : root.alpha(root.foreground, 0.05)
-                border.width: 1
-                border.color: root.alpha(root.attentionColor(kind), kind === "none" ? 0.15 : 0.6)
-
-                Row {
-                  anchors.centerIn: parent
-                  spacing: Style.space(8)
-                  Image {
-                    width: Style.space(18); height: width
-                    anchors.verticalCenter: parent.verticalCenter
-                    source: root.markSource(chip.modelData.id)
-                    sourceSize.width: width * 2; sourceSize.height: height * 2
-                    fillMode: Image.PreserveAspectFit
-                  }
-                  Column {
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 0
-                    Text {
-                      textFormat: Text.PlainText
-                      text: chip.modelData.name
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      font.bold: true
-                    }
-                    Text {
-                      textFormat: Text.PlainText
-                      text: chip.a ? (chip.a.glyph ? chip.a.glyph + " " : "") + chip.a.label : "—"
-                      color: root.attentionColor(chip.kind)
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-                }
-                MouseArea {
-                  id: chipMouse
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.nextTool(chip.modelData.id)
-                  onEntered: if (root.bar) root.bar.showTooltip(chip, "Click: switch " + chip.modelData.name + " to the next profile")
-                  onExited: if (root.bar) root.bar.hideTooltip(chip)
-                }
-              }
-            }
-          }
-
-          // error / empty
           Text {
             visible: accounts.lastError !== ""
             width: parent.width
@@ -486,433 +381,568 @@ Panel {
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
           }
-          Text {
-            visible: root.profiles.length === 0 && !accounts.busy
+
+          // =================== ACCOUNTS VIEW ===================
+          Column {
+            visible: root.view === "accounts"
             width: parent.width
-            topPadding: Style.space(16)
-            text: "No profiles yet.\nRun `agent-acct init` in a terminal."
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-          }
+            spacing: Style.space(10)
 
-          // ---------- one block per tool ----------
-          Repeater {
-            model: root.tools
-            Column {
-              id: toolBlock
-              required property var modelData
-              required property int index
-              width: column.width
-              spacing: Style.space(4)
-
-              Item { width: 1; height: Style.space(2) }
-
-              // section header: mark · NAME ······ active chip
-              Item {
-                width: parent.width
-                height: Style.space(22)
-                Row {
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(6)
-                  Image {
-                    width: Style.space(12); height: width
-                    anchors.verticalCenter: parent.verticalCenter
-                    source: root.markSource(toolBlock.modelData.id)
-                    sourceSize.width: width * 2; sourceSize.height: height * 2
-                    fillMode: Image.PreserveAspectFit
-                    opacity: 0.8
-                  }
-                  PanelSectionHeader {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: toolBlock.modelData.name.toUpperCase()
-                    foreground: root.foreground
-                    fontFamily: root.fontFamily
-                  }
-                  Text {
-                    visible: !toolBlock.modelData.hasUsage
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: "· no usage feed"
-                    color: root.faint
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-                Row {
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(6)
-                  // auto-rotate toggle: env-mode tools with a usage feed only
-                  Rectangle {
-                    id: autoChip
-                    visible: toolBlock.modelData.mode === "env" && toolBlock.modelData.hasUsage
-                    readonly property bool on: toolBlock.modelData.autoRotate === true
-                    width: autoText.implicitWidth + Style.space(14)
-                    height: Style.space(16)
-                    radius: height / 2
-                    color: on ? root.alpha(root.accent, 0.12) : "transparent"
-                    border.width: 1
-                    border.color: on ? root.alpha(root.accent, 0.35) : root.alpha(root.foreground, 0.2)
-                    Text {
-                      id: autoText
-                      anchors.centerIn: parent
-                      textFormat: Text.PlainText
-                      text: "󰑐 auto"
-                      color: autoChip.on ? root.accent : root.faint
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                    MouseArea {
-                      anchors.fill: parent
-                      hoverEnabled: true
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: accounts.setAutoRotate(toolBlock.modelData.id, !autoChip.on)
-                      onEntered: if (root.bar) root.bar.showTooltip(autoChip, autoChip.on
-                        ? "Auto-rotate on: switches to the profile with headroom when this one passes " + Math.round(Number(accounts.alerts.rotateAt || 0.9) * 100) + " %"
-                        : "Auto-rotate off — click to switch profiles automatically at the limit")
-                      onExited: if (root.bar) root.bar.hideTooltip(autoChip)
-                    }
-                  }
-                  Rectangle {
-                    width: activeChipText.implicitWidth + Style.space(14)
-                    height: Style.space(16)
-                    radius: height / 2
-                    color: root.alpha(root.accent, 0.12)
-                    border.width: 1
-                    border.color: root.alpha(root.accent, 0.35)
-                    visible: !!toolBlock.modelData.active
-                    Text {
-                      id: activeChipText
-                      anchors.centerIn: parent
-                      textFormat: Text.PlainText
-                      text: toolBlock.modelData.active ? "● " + toolBlock.modelData.active.label : ""
-                      color: root.accent
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-                }
-              }
-
-              Repeater {
-                model: toolBlock.modelData.profiles
-                Rectangle {
-                  id: row
-                  required property var modelData
-                  readonly property var p: modelData
-                  readonly property int flatIndex: root.flatIndexOf(modelData)
-                  readonly property bool hasCursor: root.cursorActive && root.cursor === flatIndex
-                  readonly property string kind: root.attentionFor(p)
-                  width: parent.width
-                  implicitHeight: rowContent.implicitHeight + Style.space(9) * 2
-                  radius: Style.cornerRadius
-                  color: hasCursor ? root.track : (p.active ? root.alpha(root.foreground, 0.045) : "transparent")
-                  border.width: 1
-                  border.color: hasCursor ? root.alpha(root.foreground, 0.28) : root.alpha(root.foreground, p.active ? 0.10 : 0.05)
-
-                  // accent rail marks the active profile
-                  Rectangle {
-                    anchors.left: parent.left
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    anchors.margins: Style.space(6)
-                    width: Style.space(3)
-                    radius: width / 2
-                    color: row.p.active ? root.accent : "transparent"
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onEntered: { root.cursorActive = true; root.cursor = row.flatIndex }
-                    onDoubleClicked: root.useCursor()
-                    onClicked: { root.cursorActive = true; root.cursor = row.flatIndex }
-                  }
-
-                  Row {
-                    id: rowContent
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: Style.space(14)
-                    anchors.rightMargin: Style.space(10)
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(10)
-
-                    // badge: the provider mark, with the profile letter pinned to its corner
-                    Item {
-                      width: Style.space(34); height: width
-                      anchors.verticalCenter: parent.verticalCenter
-                      Rectangle {
-                        anchors.fill: parent
-                        radius: width / 2
-                        color: row.p.active ? root.alpha(root.accent, 0.16) : root.alpha(root.foreground, 0.06)
-                        border.width: 1
-                        border.color: row.p.active ? root.alpha(root.accent, 0.5) : root.alpha(root.foreground, 0.12)
-                      }
-                      Image {
-                        anchors.centerIn: parent
-                        width: Style.space(18); height: width
-                        source: root.markSource(row.p.tool)
-                        sourceSize.width: width * 2; sourceSize.height: height * 2
-                        fillMode: Image.PreserveAspectFit
-                        opacity: row.p.signedIn ? 1 : 0.45
-                      }
-                      Rectangle {
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.rightMargin: -Style.space(2)
-                        anchors.bottomMargin: -Style.space(2)
-                        width: Style.space(16); height: width; radius: width / 2
-                        color: row.p.active ? root.accent : Qt.darker(root.surface, 1.0)
-                        border.width: 1
-                        border.color: row.p.active ? root.accent : root.alpha(root.foreground, 0.25)
-                        Text {
-                          anchors.centerIn: parent
-                          textFormat: Text.PlainText
-                          text: row.p.glyph || row.p.label.charAt(0)
-                          color: row.p.active ? root.surface : root.dim
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
-                          font.bold: true
-                        }
-                      }
-                    }
-
-                    // name + dir
-                    Column {
-                      width: Style.space(78)
-                      anchors.verticalCenter: parent.verticalCenter
-                      spacing: Style.space(1)
-                      Text {
-                        textFormat: Text.PlainText
-                        text: row.p.label + (root.headroomId(toolBlock.modelData) === row.p.id ? " ▲" : "")
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.body
-                        font.bold: true
-                        elide: Text.ElideRight
-                        width: parent.width
-                      }
-                      Text {
-                        textFormat: Text.PlainText
-                        text: root.shortDir(row.p.dir)
-                        color: root.faint
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        elide: Text.ElideMiddle
-                        width: parent.width
-                      }
-                    }
-
-                    // identity + meters
-                    Column {
-                      id: info
-                      width: rowContent.width - Style.space(10) * 3 - Style.space(34) - Style.space(78) - actions.width
-                      anchors.verticalCenter: parent.verticalCenter
-                      spacing: Style.space(4)
-
-                      // identity line: email + plan in one run
-                      Text {
-                        visible: row.p.signedIn
-                        width: info.width
-                        textFormat: Text.StyledText
-                        text: root.escapeHtml(root.maskEmail(row.p.email) || "signed in")
-                          + (root.planLabel(row.p) ? "  <font color=\"" + root.accent + "\">" + root.escapeHtml(root.planLabel(row.p).toUpperCase()) + "</font>" : "")
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        clip: true
-                      }
-                      Text {
-                        visible: !row.p.signedIn || row.kind === "expired" || row.kind === "unmanaged"
-                        textFormat: Text.PlainText
-                        text: root.attentionText(row.p)
-                        color: root.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                      }
-                      Text {
-                        visible: !row.p.signedIn
-                        width: info.width
-                        textFormat: Text.PlainText
-                        text: row.p.loginNote || (row.p.mode === "link"
-                          ? "Login opens a terminal; this profile becomes active for the sign-in."
-                          : "Login opens a terminal for the sign-in.")
-                        color: root.faint
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        wrapMode: Text.WordWrap
-                      }
-                      Text {
-                        visible: row.kind === "unmanaged"
-                        width: info.width
-                        textFormat: Text.PlainText
-                        text: "Run `agent-acct init` to re-link the auth file into this profile."
-                        color: root.faint
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        wrapMode: Text.WordWrap
-                      }
-
-                      // meters: one full-width bar per window
-                      Column {
-                        visible: row.p.signedIn && (row.p.limits || []).length > 0
-                        width: info.width
-                        spacing: Style.space(3)
-                        Repeater {
-                          model: row.p.limits || []
-                          Column {
-                            id: meter
-                            required property var modelData
-                            readonly property real pct: Math.max(0, Math.min(1, Number(modelData.percent || 0)))
-                            readonly property bool hot: pct >= root.warnFraction
-                            width: info.width
-                            spacing: Style.space(2)
-                            Item {
-                              width: parent.width
-                              height: meterLabel.implicitHeight
-                              Text {
-                                id: meterLabel
-                                anchors.left: parent.left
-                                textFormat: Text.PlainText
-                                text: root.windowLabel(meter.modelData.label)
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                              }
-                              Text {
-                                anchors.right: parent.right
-                                textFormat: Text.PlainText
-                                text: Math.round(meter.pct * 100) + "%" + (meter.modelData.resetsAt ? "  ·  " + root.untilLabel(meter.modelData.resetsAt) : "")
-                                color: meter.hot ? root.urgent : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                              }
-                            }
-                            Rectangle {
-                              width: parent.width; height: Math.max(3, Style.space(4)); radius: height / 2
-                              color: root.alpha(root.foreground, 0.13)
-                              Rectangle {
-                                width: parent.width * meter.pct; height: parent.height; radius: parent.radius
-                                color: meter.hot ? root.urgent : root.accent
-                              }
-                            }
-                          }
-                        }
-                      }
-                      Text {
-                        visible: row.p.signedIn && (row.p.limits || []).length > 0 && !!row.p.usageUpdatedAt
-                        textFormat: Text.PlainText
-                        text: "usage " + root.agoLabel(row.p.usageUpdatedAt)
-                        color: root.faint
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-                      Text {
-                        visible: row.p.signedIn && (row.p.limits || []).length === 0
-                        textFormat: Text.PlainText
-                        text: row.p.hasUsage === false ? "No limits published for this tool."
-                          : (row.p.todayPrompts !== null && row.p.todayPrompts !== undefined
-                             ? "today " + row.p.todayPrompts + " prompts · estimated from local sessions"
-                             : (row.p.usageStatusText || "No usage yet — press r after the first session."))
-                        color: root.faint
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        width: info.width
-                        wrapMode: Text.WordWrap
-                      }
-                    }
-
-                    // actions
-                    Column {
-                      id: actions
-                      spacing: Style.spacing.sm
-                      anchors.verticalCenter: parent.verticalCenter
-                      width: Style.space(64)
-
-                      Button {
-                        visible: !row.p.active && row.p.signedIn
-                        width: parent.width
-                        text: "Use"
-                        iconText: "󰄬"
-                        bordered: true
-                        foreground: root.foreground
-                        accent: root.accent
-                        fontFamily: root.fontFamily
-                        fontSize: Style.font.caption
-                        iconSize: Style.font.caption
-                        horizontalPadding: Style.space(6)
-                        onClicked: accounts.use(row.p.tool, row.p.id)
-                      }
-                      Button {
-                        visible: !row.p.signedIn || row.kind === "expired"
-                        width: parent.width
-                        text: "Login"
-                        iconText: "󰍂"
-                        bordered: true
-                        selected: true
-                        foreground: root.foreground
-                        accent: root.accent
-                        fontFamily: root.fontFamily
-                        fontSize: Style.font.caption
-                        iconSize: Style.font.caption
-                        horizontalPadding: Style.space(6)
-                        onClicked: accounts.login(row.p.tool, row.p.id)
-                      }
-                      Button {
-                        visible: row.p.signedIn && row.p.mode !== "link"
-                        width: parent.width
-                        text: "Shell"
-                        iconText: ""
-                        bordered: true
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                        fontSize: Style.font.caption
-                        iconSize: Style.font.caption
-                        horizontalPadding: Style.space(6)
-                        tooltipText: "Terminal with this profile's env"
-                        onClicked: accounts.shell(row.p.tool, row.p.id)
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          PanelSeparator { width: parent.width; foreground: root.foreground }
-
-          // ---------- footer: keys ----------
-          Grid {
-            width: parent.width
-            columns: 4
-            columnSpacing: Style.space(10)
-            rowSpacing: Style.space(2)
-            Repeater {
-              model: ["j/k  select", "Enter  use", "i  sign in", "t  terminal", "h/l  cycle tool", "r  refresh", "e  edit", "Esc  close"]
+            // setup nudge: one line, details live in settings
+            Rectangle {
+              visible: accounts.setupChecked && !accounts.setupComplete
+              width: parent.width
+              height: Style.space(30)
+              radius: Style.cornerRadius
+              color: root.alpha(root.urgent, 0.06)
+              border.width: 1
+              border.color: root.alpha(root.urgent, 0.4)
               Text {
-                required property var modelData
+                anchors.left: parent.left; anchors.leftMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
                 textFormat: Text.PlainText
-                text: modelData
-                color: root.faint
+                text: "Setup is incomplete — switches may not reach every terminal."
+                color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
+              Button {
+                anchors.right: parent.right; anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Finish"; bordered: true; selected: true
+                foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption
+                onClicked: root.view = "settings"
+              }
+            }
+
+            Text {
+              visible: root.profiles.length === 0 && !accounts.busy
+              width: parent.width
+              topPadding: Style.space(16)
+              text: "No tools discovered.\nInstall an AI coding CLI, then open this panel again."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
+
+            // ---------- Tabs: one per tool ----------
+            Grid {
+              id: tabs
+              width: parent.width
+              columns: root.tools.length > 4 ? 3 : Math.max(1, root.tools.length)
+              columnSpacing: Style.spacing.md
+              rowSpacing: Style.spacing.md
+              visible: root.tools.length > 0
+              readonly property real cellWidth: (width - columnSpacing * (columns - 1)) / columns
+
+              Repeater {
+                model: root.tools
+                Rectangle {
+                  id: tab
+                  required property var modelData
+                  required property int index
+                  readonly property var a: modelData.active
+                  readonly property string kind: root.activeAttention(modelData)
+                  readonly property bool selected: index === root.selectedToolIndex
+                  width: tabs.cellWidth
+                  height: Style.space(42)
+                  radius: Style.cornerRadius
+                  color: selected ? root.track : (tabMouse.containsMouse ? root.alpha(root.foreground, 0.07) : root.alpha(root.foreground, 0.035))
+                  border.width: 1
+                  border.color: selected ? root.alpha(root.accent, 0.7) : root.alpha(root.attentionColor(kind), kind === "none" ? 0.12 : 0.55)
+
+                  Row {
+                    anchors.centerIn: parent
+                    spacing: Style.space(8)
+                    Image {
+                      width: Style.space(16); height: width
+                      anchors.verticalCenter: parent.verticalCenter
+                      source: root.markSource(tab.modelData.id)
+                      sourceSize.width: width * 2; sourceSize.height: height * 2
+                      fillMode: Image.PreserveAspectFit
+                      opacity: root.toolSigned(tab.modelData) ? 1 : 0.45
+                    }
+                    Column {
+                      anchors.verticalCenter: parent.verticalCenter
+                      Text {
+                        textFormat: Text.PlainText
+                        text: tab.modelData.name
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: tab.selected
+                      }
+                      Text {
+                        textFormat: Text.PlainText
+                        text: tab.a ? (tab.a.glyph ? tab.a.glyph + " " : "") + tab.a.label : "—"
+                        color: root.attentionColor(tab.kind)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+                  MouseArea {
+                    id: tabMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.selectTab(tab.index)
+                  }
+                }
+              }
+            }
+
+            // ---------- Selected tool ----------
+            Item {
+              visible: !!root.selectedTool
+              width: parent.width
+              height: Style.space(22)
+              Row {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(6)
+                PanelSectionHeader {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.selectedTool ? root.selectedTool.name.toUpperCase() + " ACCOUNTS" : ""
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+                Text {
+                  visible: !!root.selectedTool && !root.selectedTool.hasUsage
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: "· no usage feed"
+                  color: root.faint
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+              Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(6)
+                Rectangle {
+                  visible: !!root.selectedTool && root.selectedTool.autoRotate
+                  width: autoTxt.implicitWidth + Style.space(12); height: Style.space(16); radius: height / 2
+                  color: root.alpha(root.accent, 0.12); border.width: 1; border.color: root.alpha(root.accent, 0.35)
+                  Text { id: autoTxt; anchors.centerIn: parent; textFormat: Text.PlainText; text: "󰑐 auto"; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                }
+                Rectangle {
+                  id: activePill
+                  visible: !!root.selectedTool && !!root.selectedTool.active
+                  width: activeTxt.implicitWidth + Style.space(14); height: Style.space(16); radius: height / 2
+                  color: root.alpha(root.accent, 0.12); border.width: 1; border.color: root.alpha(root.accent, 0.35)
+                  Text { id: activeTxt; anchors.centerIn: parent; textFormat: Text.PlainText; text: root.selectedTool && root.selectedTool.active ? "● " + root.selectedTool.active.label + "  󰓦" : ""; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                  MouseArea {
+                    anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.selectedTool) root.nextTool(root.selectedTool.id)
+                    onEntered: if (root.bar) root.bar.showTooltip(activePill, "Click: switch to the next " + (root.selectedTool ? root.selectedTool.name : "") + " account")
+                    onExited: if (root.bar) root.bar.hideTooltip(activePill)
+                  }
+                }
+              }
+            }
+
+            Repeater {
+              model: root.tabProfiles
+              Rectangle {
+                id: row
+                required property var modelData
+                readonly property var p: modelData
+                readonly property int tabIndex: root.tabIndexOf(modelData)
+                readonly property bool hasCursor: root.cursorActive && root.cursor === tabIndex
+                readonly property string kind: root.attentionFor(p)
+                width: parent.width
+                implicitHeight: rowContent.implicitHeight + Style.space(9) * 2
+                radius: Style.cornerRadius
+                color: hasCursor ? root.track : (p.active ? root.alpha(root.foreground, 0.045) : "transparent")
+                border.width: 1
+                border.color: hasCursor ? root.alpha(root.foreground, 0.28) : root.alpha(root.foreground, p.active ? 0.10 : 0.05)
+
+                Rectangle {
+                  anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                  anchors.margins: Style.space(6)
+                  width: Style.space(3); radius: width / 2
+                  color: row.p.active ? root.accent : "transparent"
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  onEntered: { root.cursorActive = true; root.cursor = row.tabIndex }
+                  onExited: root.cursorActive = false
+                  onDoubleClicked: root.useCursor()
+                  onClicked: { root.cursorActive = true; root.cursor = row.tabIndex }
+                }
+
+                Row {
+                  id: rowContent
+                  anchors.left: parent.left; anchors.right: parent.right
+                  anchors.leftMargin: Style.space(14); anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(10)
+
+                  // badge: provider mark with the profile letter pinned
+                  Item {
+                    width: Style.space(34); height: width
+                    anchors.verticalCenter: parent.verticalCenter
+                    Rectangle {
+                      anchors.fill: parent; radius: width / 2
+                      color: row.p.active ? root.alpha(root.accent, 0.16) : root.alpha(root.foreground, 0.06)
+                      border.width: 1; border.color: row.p.active ? root.alpha(root.accent, 0.5) : root.alpha(root.foreground, 0.12)
+                    }
+                    Image {
+                      anchors.centerIn: parent; width: Style.space(18); height: width
+                      source: root.markSource(row.p.tool); sourceSize.width: width * 2; sourceSize.height: height * 2
+                      fillMode: Image.PreserveAspectFit; opacity: row.p.signedIn ? 1 : 0.45
+                    }
+                    Rectangle {
+                      anchors.right: parent.right; anchors.bottom: parent.bottom
+                      anchors.rightMargin: -Style.space(2); anchors.bottomMargin: -Style.space(2)
+                      width: Style.space(16); height: width; radius: width / 2
+                      color: row.p.active ? root.accent : root.surface
+                      border.width: 1; border.color: row.p.active ? root.accent : root.alpha(root.foreground, 0.25)
+                      Text { anchors.centerIn: parent; textFormat: Text.PlainText; text: row.p.glyph || row.p.label.charAt(0); color: row.p.active ? root.surface : root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+                    }
+                  }
+
+                  Column {
+                    width: Style.space(78)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(1)
+                    Text {
+                      textFormat: Text.PlainText
+                      text: row.p.label + (root.headroomId(root.selectedTool) === row.p.id ? " ▲" : "")
+                      color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
+                      elide: Text.ElideRight; width: parent.width
+                    }
+                    Text {
+                      textFormat: Text.PlainText
+                      text: root.shortDir(row.p.dir)
+                      color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                      elide: Text.ElideMiddle; width: parent.width
+                    }
+                  }
+
+                  Column {
+                    id: info
+                    width: rowContent.width - Style.space(10) * 3 - Style.space(34) - Style.space(78) - actions.width
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(4)
+
+                    Text {
+                      visible: row.p.signedIn
+                      width: info.width
+                      textFormat: Text.StyledText
+                      text: root.escapeHtml(root.maskEmail(row.p.email) || "signed in")
+                        + (root.planLabel(row.p) ? "  <font color=\"" + root.accent + "\">" + root.escapeHtml(root.planLabel(row.p).toUpperCase()) + "</font>" : "")
+                      color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                      clip: true
+                    }
+                    Text {
+                      visible: !row.p.signedIn || row.kind === "expired" || row.kind === "unmanaged"
+                      textFormat: Text.PlainText
+                      text: root.attentionText(row.p)
+                      color: root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true
+                    }
+                    Text {
+                      visible: !row.p.signedIn && row.hasCursor
+                      width: info.width
+                      textFormat: Text.PlainText
+                      text: row.p.loginNote || "Login opens a terminal for the sign-in."
+                      color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                      wrapMode: Text.WordWrap
+                    }
+                    Text {
+                      visible: row.kind === "unmanaged"
+                      width: info.width
+                      textFormat: Text.PlainText
+                      text: "Run `agent-acct init` to re-link the auth file into this profile."
+                      color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                      wrapMode: Text.WordWrap
+                    }
+
+                    Column {
+                      visible: row.p.signedIn && (row.p.limits || []).length > 0
+                      width: info.width
+                      spacing: Style.space(3)
+                      Repeater {
+                        model: row.p.limits || []
+                        Column {
+                          id: meter
+                          required property var modelData
+                          readonly property real pct: Math.max(0, Math.min(1, Number(modelData.percent || 0)))
+                          readonly property bool hot: pct >= root.warnFraction
+                          width: info.width
+                          spacing: Style.space(2)
+                          Item {
+                            width: parent.width; height: meterLabel.implicitHeight
+                            Text { id: meterLabel; anchors.left: parent.left; textFormat: Text.PlainText; text: root.windowLabel(meter.modelData.label); color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                            Text { anchors.right: parent.right; textFormat: Text.PlainText; text: Math.round(meter.pct * 100) + "%" + (meter.modelData.resetsAt ? "  ·  " + root.untilLabel(meter.modelData.resetsAt) : ""); color: meter.hot ? root.urgent : root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                          }
+                          Rectangle {
+                            width: parent.width; height: Math.max(3, Style.space(4)); radius: height / 2
+                            color: root.alpha(root.foreground, 0.13)
+                            Rectangle { width: parent.width * meter.pct; height: parent.height; radius: parent.radius; color: meter.hot ? root.urgent : root.accent }
+                          }
+                        }
+                      }
+                    }
+                    Text {
+                      visible: row.p.signedIn && (row.p.limits || []).length > 0 && !!row.p.usageUpdatedAt
+                      textFormat: Text.PlainText
+                      text: "usage " + root.agoLabel(row.p.usageUpdatedAt)
+                      color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    }
+                    Text {
+                      visible: row.p.signedIn && (row.p.limits || []).length === 0
+                      textFormat: Text.PlainText
+                      text: row.p.hasUsage === false ? "No limits published for this tool."
+                        : (row.p.todayPrompts !== null && row.p.todayPrompts !== undefined
+                           ? "today " + row.p.todayPrompts + " prompts · estimated from local sessions"
+                           : (row.p.usageStatusText || "No usage yet — press r after the first session."))
+                      color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                      width: info.width; wrapMode: Text.WordWrap
+                    }
+                  }
+
+                  // actions: Login always (the call to action); Use / Shell only on hover or cursor
+                  Column {
+                    id: actions
+                    spacing: Style.spacing.sm
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(64)
+                    Button {
+                      visible: !row.p.signedIn || row.kind === "expired"
+                      width: parent.width; text: "Login"; iconText: "󰍂"; bordered: true; selected: true
+                      foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption; iconSize: Style.font.caption; horizontalPadding: Style.space(6)
+                      onClicked: accounts.login(row.p.tool, row.p.id)
+                    }
+                    Button {
+                      visible: row.hasCursor && !row.p.active && row.p.signedIn
+                      width: parent.width; text: "Use"; iconText: "󰄬"; bordered: true
+                      foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption; iconSize: Style.font.caption; horizontalPadding: Style.space(6)
+                      onClicked: accounts.use(row.p.tool, row.p.id)
+                    }
+                    Button {
+                      visible: row.hasCursor && row.p.signedIn && row.p.mode !== "link"
+                      width: parent.width; text: "Shell"; iconText: ""; bordered: true
+                      foreground: root.foreground; fontFamily: root.fontFamily; fontSize: Style.font.caption; iconSize: Style.font.caption; horizontalPadding: Style.space(6)
+                      tooltipText: "Terminal with this account's env"
+                      onClicked: accounts.shell(row.p.tool, row.p.id)
+                    }
+                    Text {
+                      visible: !row.hasCursor && row.p.signedIn && row.kind !== "expired"
+                      width: parent.width; horizontalAlignment: Text.AlignRight
+                      textFormat: Text.PlainText
+                      text: row.p.active ? "active" : "⋯"
+                      color: row.p.active ? root.accent : root.faint
+                      font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
+              }
             }
           }
-          Text {
+
+          // =================== SETTINGS VIEW ===================
+          Column {
+            visible: root.view === "settings"
             width: parent.width
-            textFormat: Text.PlainText
-            text: "Switching changes new launches only; running sessions keep their account. Link-mode tools (Cursor, OpenCode): switch with no session open."
-            color: root.faint
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
+            spacing: Style.space(12)
+
+            // ---- Alerts ----
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              Item {
+                width: parent.width; height: Style.space(22)
+                PanelSectionHeader { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "ALERTS"; foreground: root.foreground; fontFamily: root.fontFamily }
+                Row {
+                  anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(8)
+                  Text { anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: "notifications"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                  ToggleSwitch {
+                    anchors.verticalCenter: parent.verticalCenter
+                    checked: accounts.alerts.enabled !== false
+                    foreground: root.foreground; accent: root.accent
+                    onToggled: accounts.setAlert("enabled", accounts.alerts.enabled === false ? "on" : "off")
+                  }
+                }
+              }
+              Column {
+                width: parent.width; spacing: Style.space(2)
+                Item {
+                  width: parent.width; height: warnLabel.implicitHeight
+                  Text { id: warnLabel; anchors.left: parent.left; textFormat: Text.PlainText; text: "Warn when a window reaches"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                  Text { anchors.right: parent.right; textFormat: Text.PlainText; text: Math.round(warnSlider.liveValue * 100) + " %"; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                }
+                PanelSlider {
+                  id: warnSlider
+                  width: parent.width
+                  bar: root.bar
+                  minimum: 0.5; maximum: 1; step: 0.05
+                  value: Number(accounts.alerts.warnAt || 0.85)
+                  onReleased: function(v) { accounts.setAlert("warnAt", v.toFixed(2)) }
+                }
+                Text { width: parent.width; textFormat: Text.PlainText; text: "One notification per crossing, per account and window. Also tints the bar letter."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+              }
+              Column {
+                width: parent.width; spacing: Style.space(2)
+                Item {
+                  width: parent.width; height: rotLabel.implicitHeight
+                  Text { id: rotLabel; anchors.left: parent.left; textFormat: Text.PlainText; text: "Auto-rotate when the active account reaches"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                  Text { anchors.right: parent.right; textFormat: Text.PlainText; text: Math.round(rotateSlider.liveValue * 100) + " %"; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                }
+                PanelSlider {
+                  id: rotateSlider
+                  width: parent.width
+                  bar: root.bar
+                  minimum: 0.5; maximum: 1; step: 0.05
+                  value: Number(accounts.alerts.rotateAt || 0.9)
+                  onReleased: function(v) { accounts.setAlert("rotateAt", v.toFixed(2)) }
+                }
+                Text { width: parent.width; textFormat: Text.PlainText; text: "Only for tools with auto-rotate on (below) and another signed-in account under the threshold. New launches only; running sessions keep their account."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+              }
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // ---- Tools ----
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+              Item {
+                width: parent.width; height: Style.space(22)
+                PanelSectionHeader { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "TOOLS"; foreground: root.foreground; fontFamily: root.fontFamily }
+                Row {
+                  anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(14)
+                  Text { textFormat: Text.PlainText; text: "auto-rotate"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; width: Style.space(70); horizontalAlignment: Text.AlignHCenter }
+                  Text { textFormat: Text.PlainText; text: "in bar"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; width: Style.space(52); horizontalAlignment: Text.AlignHCenter }
+                }
+              }
+              Repeater {
+                model: root.tools
+                Item {
+                  id: toolRow
+                  required property var modelData
+                  width: parent.width; height: Style.space(30)
+                  Row {
+                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(8)
+                    Image { width: Style.space(14); height: width; anchors.verticalCenter: parent.verticalCenter; source: root.markSource(toolRow.modelData.id); sourceSize.width: width * 2; sourceSize.height: height * 2; fillMode: Image.PreserveAspectFit }
+                    Text { anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: toolRow.modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true }
+                    Text { anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: (toolRow.modelData.mode === "link" ? "auth link" : "env dir") + (toolRow.modelData.hasUsage ? "" : " · no usage feed"); color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                  }
+                  Row {
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(14)
+                    Item {
+                      width: Style.space(70); height: Style.space(26)
+                      ToggleSwitch {
+                        anchors.centerIn: parent
+                        visible: toolRow.modelData.mode === "env" && toolRow.modelData.hasLimits
+                        checked: toolRow.modelData.autoRotate === true
+                        foreground: root.foreground; accent: root.accent
+                        onToggled: accounts.setAutoRotate(toolRow.modelData.id, !(toolRow.modelData.autoRotate === true))
+                      }
+                      Text { anchors.centerIn: parent; visible: !(toolRow.modelData.mode === "env" && toolRow.modelData.hasLimits); textFormat: Text.PlainText; text: "—"; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                    }
+                    Item {
+                      width: Style.space(52); height: Style.space(26)
+                      ToggleSwitch {
+                        anchors.centerIn: parent
+                        checked: toolRow.modelData.barHidden !== true
+                        foreground: root.foreground; accent: root.accent
+                        onToggled: accounts.setBarHidden(toolRow.modelData.id, !(toolRow.modelData.barHidden === true))
+                      }
+                    }
+                  }
+                }
+              }
+              Text { width: parent.width; textFormat: Text.PlainText; text: "Auto-rotate needs published limits (Claude, Codex) and an env-mode tool. Tools with no signed-in account stay out of the bar regardless (see Display)."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // ---- Display ----
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              PanelSectionHeader { text: "DISPLAY"; foreground: root.foreground; fontFamily: root.fontFamily }
+              Item {
+                width: parent.width; height: Style.spacing.controlHeight
+                Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: "Account email"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                Dropdown {
+                  anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(120)
+                  showLabel: false
+                  options: ["masked", "hidden", "full"]
+                  value: root.emailDisplay
+                  fontFamily: root.fontFamily
+                  onChanged: function(v) { root.setWidgetSetting("emailDisplay", v, false) }
+                }
+              }
+              Repeater {
+                model: [
+                  { key: "showGlyphs", label: "Show account letters (α/Ω) in the bar", on: root.showGlyphs },
+                  { key: "compactBar", label: "Compact bar: letters only when something needs attention", on: root.compactBar },
+                  { key: "barShowUnsigned", label: "Show tools with no signed-in account in the bar", on: root.barShowUnsigned }
+                ]
+                Item {
+                  required property var modelData
+                  width: parent.width; height: Style.space(28)
+                  Text { anchors.left: parent.left; anchors.right: parent.right; anchors.rightMargin: Style.space(70); anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: modelData.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight }
+                  ToggleSwitch {
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                    checked: modelData.on
+                    foreground: root.foreground; accent: root.accent
+                    onToggled: root.setWidgetSetting(modelData.key, !modelData.on, true)
+                  }
+                }
+              }
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // ---- Setup ----
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              Item {
+                width: parent.width; height: Style.space(22)
+                PanelSectionHeader { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "SETUP"; foreground: root.foreground; fontFamily: root.fontFamily }
+                Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: accounts.setupComplete ? "complete" : "incomplete"; color: accounts.setupComplete ? root.accent : root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+              }
+              Repeater {
+                model: accounts.setupSteps
+                Row {
+                  required property var modelData
+                  spacing: Style.space(6)
+                  Text { textFormat: Text.PlainText; text: modelData.ok ? "✓" : "✗"; color: modelData.ok ? root.accent : root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                  Text { textFormat: Text.PlainText; text: modelData.label; color: modelData.ok ? root.dim : root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                }
+              }
+              Row {
+                spacing: Style.spacing.sm
+                Button { text: "Run setup"; iconText: "󰒓"; bordered: true; selected: !accounts.setupComplete; foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption; onClicked: accounts.runSetup() }
+                Button { text: "Remove wiring"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; fontSize: Style.font.caption; tooltipText: "agent-acct setup --remove (keeps your profiles)"; onClicked: accounts.removeSetup() }
+              }
+              Text { width: parent.width; textFormat: Text.PlainText; text: "All user-space, no sudo. Setup edits ~/.bashrc, adds a session env file and a systemd --user timer, and hides the stock single-account tabs; Remove undoes exactly that."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // ---- Registry ----
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              PanelSectionHeader { text: "REGISTRY"; foreground: root.foreground; fontFamily: root.fontFamily }
+              Row {
+                spacing: Style.spacing.sm
+                Button { text: "Edit accounts.json"; iconText: "󰏫"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; fontSize: Style.font.caption; onClicked: root.openEditor() }
+                Button { text: "Refresh usage"; iconText: "󰑐"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; fontSize: Style.font.caption; onClicked: root.refreshNow() }
+              }
+              Text { width: parent.width; textFormat: Text.PlainText; text: "Link-mode tools (Cursor, OpenCode): switch with no session of that tool open. " + (accounts.version ? "v" + accounts.version + " · " : "") + "agent-acct --help in a terminal for everything else."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+            }
           }
         }
       }

@@ -36,7 +36,7 @@ Item {
     var order = [], byTool = {}
     for (var i = 0; i < profiles.length; i++) {
       var p = profiles[i]
-      if (!byTool[p.tool]) { byTool[p.tool] = { id: p.tool, name: p.toolName || toolName(p.tool), mode: p.mode || "env", hasUsage: p.hasUsage !== false, autoRotate: p.autoRotate === true, profiles: [], active: null }; order.push(p.tool) }
+      if (!byTool[p.tool]) { byTool[p.tool] = { id: p.tool, name: p.toolName || toolName(p.tool), mode: p.mode || "env", hasUsage: p.hasUsage !== false, hasLimits: p.hasLimits === true, autoRotate: p.autoRotate === true, barHidden: p.barHidden === true, profiles: [], active: null }; order.push(p.tool) }
       byTool[p.tool].profiles.push(p)
       if (p.active) byTool[p.tool].active = p
     }
@@ -129,6 +129,9 @@ Item {
   function checkSetup() { if (!setupProcess.running) setupProcess.running = true }
   function runSetup() { run(["setup"]) }
   function setAutoRotate(tool, on) { run(["config", tool, "autoRotate", on ? "on" : "off"]) }
+  function setBarHidden(tool, on) { run(["config", tool, "barHidden", on ? "on" : "off"]) }
+  function setAlert(key, value) { run(["config", "alerts", key, String(value)]) }
+  function removeSetup() { run(["setup", "--remove"]) }
 
   function use(tool, profile) { run(["use", tool, profile]) }
   function next(tool) { run(["next", tool]) }
