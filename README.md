@@ -9,6 +9,10 @@ CLI you describe in a small JSON file.
 
 ![panel](preview.png)
 
+![bar](docs/bar.png)
+
+*Bar: one mark per signed-in tool with the active profile's letter. Panel: chips, per-profile cards with meters, Use / Login / Shell. Tokyo Night shown; every colour follows your Omarchy theme.*
+
 ## What you get
 
 - **Bar**: one mark per tool you are signed in to (at least one profile),
@@ -31,6 +35,8 @@ CLI you describe in a small JSON file.
   shows one tab per profile ("Claude · Alpha", "Codex · Omega") with its full
   charts, because this plugin writes per-profile usage records in the format
   the stock collectors use.
+
+  ![stock Agents panel with one tab per profile](docs/stock-agents-tabs.png)
 - **CLI**: everything the bar does is `agent-acct …` in a terminal.
 
 ## Install
