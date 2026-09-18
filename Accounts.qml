@@ -128,9 +128,24 @@ Item {
   }
   function checkSetup() { if (!setupProcess.running) setupProcess.running = true }
   function runSetup() { run(["setup"]) }
-  function setAutoRotate(tool, on) { run(["config", tool, "autoRotate", on ? "on" : "off"]) }
-  function setBarHidden(tool, on) { run(["config", tool, "barHidden", on ? "on" : "off"]) }
-  function setAlert(key, value) { run(["config", "alerts", key, String(value)]) }
+  // Settings changes show immediately; the CLI write and the status re-read
+  // that follows confirm (or correct) them a moment later.
+  function patchTool(tool, key, value) {
+    var next = []
+    for (var i = 0; i < profiles.length; i++) {
+      var p = profiles[i]
+      if (p.tool === tool) { var c = {}; for (var k in p) c[k] = p[k]; c[key] = value; next.push(c) } else next.push(p)
+    }
+    profiles = next
+  }
+  function setAutoRotate(tool, on) { patchTool(tool, "autoRotate", !!on); run(["config", tool, "autoRotate", on ? "on" : "off"]) }
+  function setBarHidden(tool, on) { patchTool(tool, "barHidden", !!on); run(["config", tool, "barHidden", on ? "on" : "off"]) }
+  function setAlert(key, value) {
+    var a = {}; for (var k in alerts) a[k] = alerts[k]
+    a[key] = key === "enabled" ? (value === "on" || value === true) : Number(value)
+    alerts = a
+    run(["config", "alerts", key, String(value)])
+  }
   function removeSetup() { run(["setup", "--remove"]) }
 
   function use(tool, profile) { run(["use", tool, profile]) }

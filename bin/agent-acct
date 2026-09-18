@@ -266,34 +266,41 @@ ensure_dir() {
 # One JSON object per profile. Identity comes from the tool's jq program over
 # its credential file; limits from the usage record. Tokens are never printed.
 profile_status() {
-  local t=$1 p=$2 d cred ident='{}' email="" managed=true active exists=false rec
-  d=$(profile_dir "$t" "$p"); cred="$d/$(tool_cred "$t")"; rec="$USAGE_DIR/$t-$p.json"
-  active=$([[ $(active_of "$t") == "$p" ]] && echo true || echo false)
+  local t=$1 p=$2 d cred ident='{}' email="" managed=true active exists=false rec label glyph auto bh
+  local def tcred tmode tname tnote tcol tenv ejq efile ecmd eonly
+  def=$(tool_def "$t")
+  IFS=$'\t' read -r tcred tmode tname tnote tcol tenv efile eonly < <(jq -r '[.credFile, .mode, (.name // .id), (.loginNote // ""), (.collector // ""), (.envVar // ""), (.identity.emailFile // ""), (.identity.emailCommandActiveOnly // false | tostring)] | @tsv' <<<"$def")
+  IFS=$'\t' read -r d label glyph active auto bh < <(reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t] as $T | $T.profiles[$p] as $P | [($P.dir // ""), ($P.label // $p), ($P.glyph // ""), (if $T.active == $p then "true" else "false" end), (if $T.autoRotate == true then "true" else "false" end), (if $T.barHidden == true then "true" else "false" end)] | @tsv')
+  d=$(expand "$d"); cred="$d/$tcred"; rec="$USAGE_DIR/$t-$p.json"
   [[ -d $d ]] && exists=true
   if [[ -s $cred ]]; then
-    ident=$(jq -c --argjson now "$(now_ms)" -f <(tool_def "$t" | jq -r '.identity.jq') "$cred" 2>/dev/null || echo '{}')
+    ident=$(jq -c --argjson now "$(now_ms)" -f <(jq -r '.identity.jq' <<<"$def") "$cred" 2>/dev/null || echo '{}')
     if [[ $(jq -r '.signedIn // false' <<<"$ident") == true && $(jq -r '.email // ""' <<<"$ident") == "" ]]; then
-      local ef; ef=$(tool_field "$t" identity | jq -r '.emailFile // empty' 2>/dev/null || true)
-      if [[ -n $ef && -s $d/$ef ]]; then
-        email=$(jq -r "$(tool_def "$t" | jq -r '.identity.emailJq // ".email // \"\""')" "$d/$ef" 2>/dev/null || true)
-      elif tool_def "$t" | jq -e '.identity.emailCommand' >/dev/null; then
-        local only; only=$(tool_def "$t" | jq -r '.identity.emailCommandActiveOnly // false')
-        if [[ $only != true || $active == true ]]; then
-          local -a cmd; mapfile -t cmd < <(tool_def "$t" | jq -r '.identity.emailCommand[]')
-          local ev=(); [[ -n $(tool_env "$t") ]] && ev=("$(tool_env "$t")=$d")
-          email=$(env "${ev[@]}" "${cmd[@]}" 2>/dev/null | jq -r "$(tool_def "$t" | jq -r '.identity.emailJq // ".email // \"\""')" 2>/dev/null || true)
+      ejq=$(jq -r '.identity.emailJq // ".email // \"\""' <<<"$def")
+      if [[ -n $efile && -s $d/$efile ]]; then
+        email=$(jq -r "$ejq" "$d/$efile" 2>/dev/null || true)
+      elif jq -e '.identity.emailCommand' <<<"$def" >/dev/null; then
+        if [[ $eonly != true || $active == true ]]; then
+          # the CLI's own status call is slow (a Node start-up); cache it per credential-file mtime
+          local ecache="$CACHE_BASE/email-$t-$p" stamp; stamp=$(stat -c %Y "$cred" 2>/dev/null || echo 0)
+          if [[ -s $ecache && $(head -n1 "$ecache") == "$stamp" ]]; then email=$(sed -n 2p "$ecache")
+          else
+            local -a cmd; mapfile -t cmd < <(jq -r '.identity.emailCommand[]' <<<"$def")
+            local ev=(); [[ -n $tenv ]] && ev=("$tenv=$d")
+            email=$(env "${ev[@]}" "${cmd[@]}" 2>/dev/null | jq -r "$ejq" 2>/dev/null || true)
+            mkdir -p "$CACHE_BASE"; printf '%s\n%s\n' "$stamp" "$email" >"$ecache"
+          fi
         fi
       fi
       ident=$(jq --arg e "$email" '.email = $e' <<<"$ident")
     fi
   fi
-  if [[ $(tool_mode "$t") == link && $active == true ]]; then link_ok "$t" "$p" || managed=false; fi
+  if [[ $tmode == link && $active == true ]]; then link_ok "$t" "$p" || managed=false; fi
   local record='{}'; [[ -s $rec ]] && record=$(cat "$rec")
-  jq -n --arg tool "$t" --arg name "$(tool_name "$t")" --arg id "$p" --arg label "$(profile_label "$t" "$p")" --arg glyph "$(profile_glyph "$t" "$p")" \
-    --arg dir "$d" --arg mode "$(tool_mode "$t")" --argjson hasUsage "$([[ -n $(tool_collector "$t") ]] && echo true || echo false)" \
-    --arg loginNote "$(tool_field "$t" loginNote)" --argjson autoRotate "$([[ $(tool_opt "$t" autoRotate) == true ]] && echo true || echo false)" \
-    --argjson barHidden "$([[ $(tool_opt "$t" barHidden) == true ]] && echo true || echo false)" \
-    --argjson hasLimits "$([[ $(tool_collector "$t") == stock:* ]] && echo true || echo false)" \
+  jq -n --arg tool "$t" --arg name "$tname" --arg id "$p" --arg label "$label" --arg glyph "$glyph" \
+    --arg dir "$d" --arg mode "$tmode" --argjson hasUsage "$([[ -n $tcol ]] && echo true || echo false)" \
+    --arg loginNote "$tnote" --argjson autoRotate "$auto" --argjson barHidden "$bh" \
+    --argjson hasLimits "$([[ $tcol == stock:* ]] && echo true || echo false)" \
     --argjson active "$active" --argjson exists "$exists" --argjson managed "$managed" --argjson ident "$ident" --argjson record "$record" \
     --argjson warnAt "$(alert_opt warnAt 0.85)" '
     ($ident.signedIn // false) as $signed | (($record.limits // []) | map(.percent // 0) | max // 0) as $worst |
@@ -302,6 +309,10 @@ profile_status() {
      plan: (if ($record.tierLabel // "") != "" then $record.tierLabel else ($ident.plan // "") end),
      expiresAt: ($ident.expiresAt // null), expired: ($ident.expired // false),
      limits: ($record.limits // []), worst: $worst, usageUpdatedAt: ($record.updatedAt // null), ready: ($record.ready // false),
+     activity: (if ($record.recentDays // []) | length > 0 then
+       {todayPrompts: ($record.todayPrompts // 0), todaySessions: ($record.todaySessions // 0), todayTokens: ($record.todayTotalTokens // 0),
+        peakTokens: ([$record.recentDays[].messageCount // 0] | max), peakPrompts: ([$record.recentDays[].promptCount // 0] | max),
+        estimated: ($record.estimated // false)} else null end),
      usageStatusText: ($record.usageStatusText // ""), todayPrompts: ($record.todayPrompts // null),
      attention: (if ($signed | not) then "login" elif ($ident.expired // false) then "expired" elif ($managed | not) then "unmanaged"
                  elif $worst >= $warnAt then "limit" else "none" end)}'
@@ -446,6 +457,8 @@ collect_one() {
     local -a flags=(); $force && flags+=(--force)
     record=$(env "$(tool_env "$t")=$d" XDG_CACHE_HOME="$cache" "${col#stock:}" "${flags[@]}") || { echo "agent-acct: $t:$p collector failed" >&2; return 1; } ;;
   local)
+    # link-mode tools share one session store; attribute it to the active slot only
+    if [[ $(tool_mode "$t") == link && $(active_of "$t") != "$p" ]]; then rm -f "$USAGE_DIR/$t-$p.json"; return 0; fi
     record=$("$PLUGIN_DIR/bin/collect-local" --tool "$t" --dir "$d" --def <(tool_def "$t")) || return 0 ;;
   bin:*)
     record=$("$PLUGIN_DIR/bin/${col#bin:}" --tool "$t" --dir "$d" --def <(tool_def "$t")) || return 0 ;;

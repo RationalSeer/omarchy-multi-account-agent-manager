@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.rationalseer.multi-account-agent-manager",
   "name": "Multi-Account Agent Manager",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": "RationalSeer",
   "license": "MIT",
   "homepage": "https://github.com/RationalSeer/omarchy-multi-account-agent-manager",
@@ -26,7 +26,8 @@
       "showGlyphs": true,
       "compactBar": false,
       "barShowUnsigned": false,
-      "emailDisplay": "masked"
+      "emailDisplay": "masked",
+      "showAllTools": false
     },
     "schema": [
       { "key": "statusIntervalSec", "type": "integer", "label": "Status refresh (seconds)", "min": 30, "max": 3600, "step": 30, "defaultValue": 300 },
@@ -34,7 +35,8 @@
       { "key": "showGlyphs", "type": "boolean", "label": "Show profile letters (α/Ω) in the bar", "defaultValue": true },
       { "key": "compactBar", "type": "boolean", "label": "Compact bar: only tools that need attention show a letter", "defaultValue": false },
       { "key": "barShowUnsigned", "type": "boolean", "label": "Also show tools with no signed-in profile in the bar", "defaultValue": false },
-      { "key": "emailDisplay", "type": "enum", "label": "Account email in the panel", "options": ["masked", "hidden", "full"], "defaultValue": "masked" }
+      { "key": "emailDisplay", "type": "enum", "label": "Account email in the panel", "options": ["masked", "hidden", "full"], "defaultValue": "masked" },
+      { "key": "showAllTools", "type": "boolean", "label": "Show every tool's accounts at once instead of one tab", "defaultValue": false }
     ]
   }
 }

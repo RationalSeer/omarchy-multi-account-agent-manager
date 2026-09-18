@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 — 2026-09-18
+
+- Settings apply instantly (optimistic), confirmed by the status re-read;
+  `agent-acct status` is ~3× faster (one registry/tool lookup per profile,
+  cached CLI email lookups).
+- Activity meters for accounts without published limits (Grok, Cursor,
+  Gemini): today's prompts/tokens against the week's busiest day.
+- Cursor usage is read from its agent transcripts; link-mode usage is
+  attributed to the active slot only.
+- `showAllTools` setting (`a` key): every tool's accounts at once; tabs then
+  scroll to the tool.
+- Redrawn provider marks with brand-like shapes and colours (Gemini gradient,
+  Codex knot, Cursor cube, Grok X, OpenCode tile).
+- IPC `tab <tool>`.
+
 ## 0.4.0 — 2026-09-18
 
 - Panel v3: one tab per tool instead of stacked sections; Use/Shell appear on

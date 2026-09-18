@@ -97,6 +97,7 @@ def main():
     dirs.append(d)
   if not dirs:
     return 0
+  globs = local.get("globs") or ["**/*.jsonl", "**/*.json"]
 
   today = dt.date.today()
   cutoff = (dt.datetime.now() - dt.timedelta(days=MAX_AGE_DAYS)).timestamp()
@@ -108,8 +109,11 @@ def main():
   for d in dirs:
     if not os.path.isdir(d):
       continue
-    for path in glob.glob(os.path.join(d, "**", "*.json*"), recursive=True):
-      if not (path.endswith(".json") or path.endswith(".jsonl")):
+    paths = set()
+    for pattern in globs:
+      paths.update(glob.glob(os.path.join(d, pattern), recursive=True))
+    for path in sorted(paths):
+      if not (path.endswith(".json") or path.endswith(".jsonl")) or not os.path.isfile(path):
         continue
       try:
         mtime = os.path.getmtime(path)
@@ -177,7 +181,7 @@ def main():
   recent = []
   for i in range(6, -1, -1):
     d = today - dt.timedelta(days=i)
-    recent.append({"date": d.isoformat(), "messageCount": per_day.get(d, {}).get("tokens", 0)})
+    recent.append({"date": d.isoformat(), "messageCount": per_day.get(d, {}).get("tokens", 0), "promptCount": per_day.get(d, {}).get("prompts", 0), "sessionCount": per_day.get(d, {}).get("sessions", 0)})
   t = per_day.get(today, {"sessions": 0, "prompts": 0, "tokens": 0})
   record = {
     "schemaVersion": 1,

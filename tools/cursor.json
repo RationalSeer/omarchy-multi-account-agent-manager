@@ -10,6 +10,6 @@
     "emailCommand": ["cursor-agent", "status", "--format", "json"], "emailJq": ".email // .user.email // \"\"", "emailCommandActiveOnly": true
   },
   "collector": "local",
-  "localUsage": { "dirs": ["~/.cursor/chats", "~/.cursor/cli/sessions", "~/.local/share/cursor-agent/chats"], "note": "Cursor publishes no limits here; usage is estimated from local session files." },
+  "localUsage": { "dirs": ["~/.cursor/projects"], "globs": ["**/agent-transcripts/**/*.jsonl"], "note": "Cursor publishes no limits here; usage is estimated from local agent transcripts." },
   "enabled": true, "verified": "cursor-agent 2026.09.15 (auth path read from the CLI bundle: $XDG_CONFIG_HOME/cursor/auth.json)"
 }

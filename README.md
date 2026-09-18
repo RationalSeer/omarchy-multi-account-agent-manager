@@ -25,8 +25,11 @@ CLI you describe in a small JSON file.
   meters and reset times. **Login** is always visible; **Use** and **Shell**
   appear when you hover or move the cursor onto a card. The `● Alpha` pill
   cycles the tool's active account. Keys: `j`/`k` select, `Enter` use,
-  `i` sign in, `t` terminal, `h`/`l` previous/next tool, `r` refresh,
-  `s` settings, `e` edit the registry, `?` legend, `Esc` back/close.
+  `i` sign in, `t` terminal, `h`/`l` previous/next tool, `a` all tools /
+  one tab, `r` refresh, `s` settings, `e` edit the registry, `?` legend,
+  `Esc` back/close. Accounts whose CLI publishes no limits (Grok, Cursor,
+  Gemini) get an activity meter instead — today's prompts/tokens against the
+  busiest day of the week, estimated from local session files.
 - **Settings page** (gear or `s`): alert and auto-rotate thresholds as
   sliders, notifications on/off, per-tool auto-rotate and in-bar switches,
   email display, bar options, the setup checklist with Run/Remove, and the
@@ -141,6 +144,7 @@ up only when its binary is on `PATH` and the definition is `enabled`.
 | `compactBar` | false | letters only for tools that need attention |
 | `barShowUnsigned` | false | also show tools with no signed-in profile in the bar |
 | `emailDisplay` | masked | `masked` (cyc…@example.com), `hidden`, or `full` |
+| `showAllTools` | false | every tool's accounts at once instead of one tab (`a` in the panel) |
 
 Thresholds for alerts and auto-rotate live in the registry (the settings page
 edits the same values): `agent-acct config alerts warnAt 0.85`,
@@ -182,9 +186,10 @@ edits the same values): `agent-acct config alerts warnAt 0.85`,
 
 ## IPC
 
-`omarchy-shell io.github.rationalseer.multi-account-agent-manager <open|close|toggle|settings|refresh|next <tool>|status>`
+`omarchy-shell io.github.rationalseer.multi-account-agent-manager <open|close|toggle|settings|tab <tool>|refresh|next <tool>|status>`
 
 ## License
 
-MIT. Provider marks for Claude and Codex are the ones shipped with Omarchy's
-first-party Agents plugin (MIT); the other marks are simple original shapes.
+MIT. The Claude mark is the one shipped with Omarchy's first-party Agents
+plugin (MIT); the other marks are simple original shapes drawn to be
+reminiscent of each product, not copies of their logos.

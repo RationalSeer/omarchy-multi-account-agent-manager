@@ -24,12 +24,18 @@ Panel {
   readonly property color track: Style.selectedFillFor(foreground, Color.accent)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property real warnFraction: Math.max(0.5, Math.min(1, Number(setting("limitWarnPercent", 85)) / 100))
-  readonly property bool showGlyphs: setting("showGlyphs", true) !== false
-  readonly property bool compactBar: setting("compactBar", false) === true
-  readonly property bool barShowUnsigned: setting("barShowUnsigned", false) === true
+  // Widget settings come from shell.json; a change made in the settings page
+  // is applied locally at once and the file catches up when the shell reloads.
+  property var pending: ({})
+  onSettingsChanged: pending = ({})
+  function opt(name, fallback) { return pending[name] !== undefined ? pending[name] : setting(name, fallback) }
+  readonly property real warnFraction: Math.max(0.5, Math.min(1, Number(opt("limitWarnPercent", 85)) / 100))
+  readonly property bool showGlyphs: opt("showGlyphs", true) !== false
+  readonly property bool compactBar: opt("compactBar", false) === true
+  readonly property bool barShowUnsigned: opt("barShowUnsigned", false) === true
+  readonly property bool showAllTools: opt("showAllTools", false) === true
   // "masked" (cyc…@example.com), "hidden" (never shown), or "full"
-  readonly property string emailDisplay: String(setting("emailDisplay", "masked"))
+  readonly property string emailDisplay: String(opt("emailDisplay", "masked"))
 
   // The bar only lists tools you are signed in to (at least one profile);
   // the panel still lists every discovered tool so you can sign the rest in.
@@ -51,13 +57,31 @@ Panel {
     return 0
   }
   readonly property var selectedTool: tools.length > 0 ? tools[selectedToolIndex] : null
-  readonly property var tabProfiles: selectedTool ? selectedTool.profiles : []
+  readonly property var tabProfiles: showAllTools ? profiles : (selectedTool ? selectedTool.profiles : [])
+  readonly property var shownTools: showAllTools ? tools : (selectedTool ? [selectedTool] : [])
   function selectTab(index) {
     if (tools.length === 0) return
     var i = ((index % tools.length) + tools.length) % tools.length
-    selectedToolId = tools[i].id; cursor = 0
+    selectedToolId = tools[i].id
+    if (showAllTools) { var item = blocks.itemAt(i); if (item) panelFlick.contentY = Math.min(item.y + toolsColumn.y, Math.max(0, panelFlick.contentHeight - panelFlick.height)) }
+    else cursor = 0
   }
-  readonly property string legend: "j/k  select account\nEnter  use\ni  sign in\nt  terminal\nh/l  previous / next tool\nr  refresh usage\ns  settings\ne  edit registry\nEsc  back / close"
+  // activity meter for accounts without published limits: today against the 7-day peak
+  function activityFraction(p) {
+    var a = p && p.activity; if (!a) return 0
+    if (a.peakTokens > 0) return Math.max(0, Math.min(1, a.todayTokens / a.peakTokens))
+    if (a.peakPrompts > 0) return Math.max(0, Math.min(1, a.todayPrompts / a.peakPrompts))
+    return a.todayPrompts > 0 || a.todaySessions > 0 ? 1 : 0
+  }
+  function activityText(p) {
+    var a = p && p.activity; if (!a) return ""
+    var bits = []
+    if (a.todayPrompts) bits.push(a.todayPrompts + (a.todayPrompts === 1 ? " prompt" : " prompts"))
+    if (a.todayTokens) bits.push(a.todayTokens >= 1e6 ? (a.todayTokens / 1e6).toFixed(1) + "M tokens" : a.todayTokens >= 1e3 ? Math.round(a.todayTokens / 1e3) + "k tokens" : a.todayTokens + " tokens")
+    if (!bits.length && a.todaySessions) bits.push(a.todaySessions + (a.todaySessions === 1 ? " session" : " sessions"))
+    return bits.join(" · ") || "nothing yet"
+  }
+  readonly property string legend: "j/k  select account\nEnter  use\ni  sign in\nt  terminal\nh/l  previous / next tool\na  all tools / one tool\nr  refresh usage\ns  settings\ne  edit registry\nEsc  back / close"
 
   readonly property var tools: accounts.tools
   readonly property var profiles: accounts.profiles
@@ -161,10 +185,11 @@ Panel {
 
   // ---- actions ----
   function moveCursor(dy) { if (tabProfiles.length === 0) return; cursorActive = true; cursor = ((cursor + dy) % tabProfiles.length + tabProfiles.length) % tabProfiles.length }
-  function tabIndexOf(p) { for (var i = 0; i < tabProfiles.length; i++) if (tabProfiles[i].id === p.id) return i; return -1 }
+  function tabIndexOf(p) { for (var i = 0; i < tabProfiles.length; i++) if (tabProfiles[i].id === p.id && tabProfiles[i].tool === p.tool) return i; return -1 }
   // widget settings live in shell.json; omarchy-bar set writes them and the shell hot-reloads
   function setWidgetSetting(key, value, json) {
     if (!bar) return
+    var next = {}; for (var k in pending) next[k] = pending[k]; next[key] = value; pending = next
     bar.run("omarchy-bar set " + shellQuote(moduleName) + " " + shellQuote(key) + " " + shellQuote(String(value)) + (json ? " --json" : ""))
   }
   function useCursor() { var p = cursorProfile; if (p && !p.active) accounts.use(p.tool, p.id) }
@@ -191,6 +216,7 @@ Panel {
     function next(tool: string): string { root.nextTool(tool); return "ok" }
     function status(): string { return JSON.stringify(root.profiles) }
     function settings(): void { root.open(); root.view = "settings" }
+    function tab(tool: string): string { for (var i = 0; i < root.tools.length; i++) if (root.tools[i].id === tool) { root.selectTab(i); root.open(); root.view = "accounts"; return "ok" } return "unknown tool" }
   }
 
   visible: accounts.available && (root.barTools.length > 0 || root.tools.length > 0)
@@ -311,6 +337,7 @@ Panel {
         if (t === "r" || t === "R") root.refreshNow()
         else if (t === "s" || t === "S") root.view = root.view === "settings" ? "accounts" : "settings"
         else if (t === "e" || t === "E") root.openEditor()
+        else if (t === "a" || t === "A") root.setWidgetSetting("showAllTools", !root.showAllTools, true)
         else if (root.view !== "accounts") return
         else if (t === "i" || t === "I") root.loginCursor()
         else if (t === "t" || t === "T") root.shellCursor()
@@ -494,9 +521,23 @@ Panel {
               }
             }
 
-            // ---------- Selected tool ----------
+            // ---------- Tool blocks: one (tab mode) or all ----------
+            Column {
+              id: toolsColumn
+              width: parent.width
+              spacing: Style.space(10)
+              Repeater {
+                id: blocks
+                model: root.shownTools
+                Column {
+                  id: block
+                  required property var modelData
+                  required property int index
+                  readonly property var tool: modelData
+                  width: toolsColumn.width
+                  spacing: Style.space(4)
             Item {
-              visible: !!root.selectedTool
+              visible: !!block.tool
               width: parent.width
               height: Style.space(22)
               Row {
@@ -505,12 +546,12 @@ Panel {
                 spacing: Style.space(6)
                 PanelSectionHeader {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.selectedTool ? root.selectedTool.name.toUpperCase() + " ACCOUNTS" : ""
+                  text: block.tool ? block.tool.name.toUpperCase() + " ACCOUNTS" : ""
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                 }
                 Text {
-                  visible: !!root.selectedTool && !root.selectedTool.hasUsage
+                  visible: !!block.tool && !block.tool.hasUsage
                   anchors.verticalCenter: parent.verticalCenter
                   textFormat: Text.PlainText
                   text: "· no usage feed"
@@ -524,21 +565,21 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(6)
                 Rectangle {
-                  visible: !!root.selectedTool && root.selectedTool.autoRotate
+                  visible: !!block.tool && block.tool.autoRotate
                   width: autoTxt.implicitWidth + Style.space(12); height: Style.space(16); radius: height / 2
                   color: root.alpha(root.accent, 0.12); border.width: 1; border.color: root.alpha(root.accent, 0.35)
                   Text { id: autoTxt; anchors.centerIn: parent; textFormat: Text.PlainText; text: "󰑐 auto"; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
                 }
                 Rectangle {
                   id: activePill
-                  visible: !!root.selectedTool && !!root.selectedTool.active
+                  visible: !!block.tool && !!block.tool.active
                   width: activeTxt.implicitWidth + Style.space(14); height: Style.space(16); radius: height / 2
                   color: root.alpha(root.accent, 0.12); border.width: 1; border.color: root.alpha(root.accent, 0.35)
-                  Text { id: activeTxt; anchors.centerIn: parent; textFormat: Text.PlainText; text: root.selectedTool && root.selectedTool.active ? "● " + root.selectedTool.active.label + "  󰓦" : ""; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                  Text { id: activeTxt; anchors.centerIn: parent; textFormat: Text.PlainText; text: block.tool && block.tool.active ? "● " + block.tool.active.label + "  󰓦" : ""; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
                   MouseArea {
                     anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                    onClicked: if (root.selectedTool) root.nextTool(root.selectedTool.id)
-                    onEntered: if (root.bar) root.bar.showTooltip(activePill, "Click: switch to the next " + (root.selectedTool ? root.selectedTool.name : "") + " account")
+                    onClicked: if (block.tool) root.nextTool(block.tool.id)
+                    onEntered: if (root.bar) root.bar.showTooltip(activePill, "Click: switch to the next " + (block.tool ? block.tool.name : "") + " account")
                     onExited: if (root.bar) root.bar.hideTooltip(activePill)
                   }
                 }
@@ -546,7 +587,7 @@ Panel {
             }
 
             Repeater {
-              model: root.tabProfiles
+              model: block.tool ? block.tool.profiles : []
               Rectangle {
                 id: row
                 required property var modelData
@@ -613,7 +654,7 @@ Panel {
                     spacing: Style.space(1)
                     Text {
                       textFormat: Text.PlainText
-                      text: row.p.label + (root.headroomId(root.selectedTool) === row.p.id ? " ▲" : "")
+                      text: row.p.label + (root.headroomId(block.tool) === row.p.id ? " ▲" : "")
                       color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
                       elide: Text.ElideRight; width: parent.width
                     }
@@ -695,13 +736,27 @@ Panel {
                       text: "usage " + root.agoLabel(row.p.usageUpdatedAt)
                       color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
                     }
+                    // no published limits: an activity meter, today against the 7-day peak
+                    Column {
+                      visible: row.p.signedIn && (row.p.limits || []).length === 0 && !!row.p.activity
+                      width: info.width
+                      spacing: Style.space(2)
+                      Item {
+                        width: parent.width; height: actLabel.implicitHeight
+                        Text { id: actLabel; anchors.left: parent.left; textFormat: Text.PlainText; text: "Today" + (row.p.activity && row.p.activity.estimated ? " · est." : ""); color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                        Text { anchors.left: actLabel.right; anchors.leftMargin: Style.space(8); anchors.right: parent.right; horizontalAlignment: Text.AlignRight; elide: Text.ElideLeft; textFormat: Text.PlainText; text: root.activityText(row.p); color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                      }
+                      Rectangle {
+                        width: parent.width; height: Math.max(3, Style.space(4)); radius: height / 2
+                        color: root.alpha(root.foreground, 0.13)
+                        Rectangle { width: parent.width * root.activityFraction(row.p); height: parent.height; radius: parent.radius; color: root.alpha(root.accent, 0.75) }
+                      }
+                      Text { textFormat: Text.PlainText; text: "vs. busiest day this week · no limits published"; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                    }
                     Text {
-                      visible: row.p.signedIn && (row.p.limits || []).length === 0
+                      visible: row.p.signedIn && (row.p.limits || []).length === 0 && !row.p.activity
                       textFormat: Text.PlainText
-                      text: row.p.hasUsage === false ? "No limits published for this tool."
-                        : (row.p.todayPrompts !== null && row.p.todayPrompts !== undefined
-                           ? "today " + row.p.todayPrompts + " prompts · estimated from local sessions"
-                           : (row.p.usageStatusText || "No usage yet — press r after the first session."))
+                      text: row.p.hasUsage === false ? "No limits published for this tool." : (row.p.usageStatusText || "No usage yet — press r after the first session.")
                       color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption
                       width: info.width; wrapMode: Text.WordWrap
                     }
@@ -743,7 +798,10 @@ Panel {
                   }
                 }
               }
+                }
+              }
             }
+          }
           }
 
           // =================== SETTINGS VIEW ===================
@@ -883,6 +941,7 @@ Panel {
               }
               Repeater {
                 model: [
+                  { key: "showAllTools", label: "Show every tool's accounts at once (a)", on: root.showAllTools },
                   { key: "showGlyphs", label: "Show account letters (α/Ω) in the bar", on: root.showGlyphs },
                   { key: "compactBar", label: "Compact bar: letters only when something needs attention", on: root.compactBar },
                   { key: "barShowUnsigned", label: "Show tools with no signed-in account in the bar", on: root.barShowUnsigned }
