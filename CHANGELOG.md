@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 — 2026-09-18
+
+- Accounts can be named anything: Settings → Accounts renames (label +
+  badge), adds and forgets accounts; `agent-acct rename` / `add` / `remove`.
+- **Launch** action and `o` key: open the CLI on a given account;
+  `agent-acct launch <tool> [<account>]`.
+- Reset notifications: when a window you were warned about resets
+  (`config alerts resetNotify`).
+- Self-heal after updates: setup is stamped with the plugin version and
+  re-applied silently when it changes (only for users who ran setup).
+- First-run hint when every tool has a single account.
+- Fixed: status fields could shift when a definition had an empty field
+  (auto-rotate switches were hidden for Claude/Codex); settings pending
+  values no longer trigger a binding loop; taller settings view.
+
 ## 0.5.0 — 2026-09-18
 
 - Settings apply instantly (optimistic), confirmed by the status re-read;

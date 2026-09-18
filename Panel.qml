@@ -27,7 +27,8 @@ Panel {
   // Widget settings come from shell.json; a change made in the settings page
   // is applied locally at once and the file catches up when the shell reloads.
   property var pending: ({})
-  onSettingsChanged: pending = ({})
+  // pending values expire on their own; by then shell.json has been reloaded
+  Timer { id: pendingClear; interval: 4000; onTriggered: root.pending = ({}) }
   function opt(name, fallback) { return pending[name] !== undefined ? pending[name] : setting(name, fallback) }
   readonly property real warnFraction: Math.max(0.5, Math.min(1, Number(opt("limitWarnPercent", 85)) / 100))
   readonly property bool showGlyphs: opt("showGlyphs", true) !== false
@@ -81,7 +82,19 @@ Panel {
     if (!bits.length && a.todaySessions) bits.push(a.todaySessions + (a.todaySessions === 1 ? " session" : " sessions"))
     return bits.join(" · ") || "nothing yet"
   }
-  readonly property string legend: "j/k  select account\nEnter  use\ni  sign in\nt  terminal\nh/l  previous / next tool\na  all tools / one tool\nr  refresh usage\ns  settings\ne  edit registry\nEsc  back / close"
+  readonly property string legend: "j/k  select account\nEnter  use\no  launch the CLI on it\ni  sign in\nt  terminal\nh/l  previous / next tool\na  all tools / one tool\nr  refresh usage\ns  settings\ne  edit registry\nEsc  back / close"
+  // true while a settings text field has focus; the key catcher then passes keys through
+  property bool editing: false
+  readonly property bool onlyFirstAccounts: {
+    var signedTools = 0, extra = 0
+    for (var i = 0; i < tools.length; i++) {
+      var n = 0
+      for (var j = 0; j < tools[i].profiles.length; j++) if (tools[i].profiles[j].signedIn) n++
+      if (n > 0) signedTools++
+      if (n > 1) extra++
+    }
+    return signedTools > 0 && extra === 0
+  }
 
   readonly property var tools: accounts.tools
   readonly property var profiles: accounts.profiles
@@ -190,16 +203,25 @@ Panel {
   function setWidgetSetting(key, value, json) {
     if (!bar) return
     var next = {}; for (var k in pending) next[k] = pending[k]; next[key] = value; pending = next
+    pendingClear.restart()
     bar.run("omarchy-bar set " + shellQuote(moduleName) + " " + shellQuote(key) + " " + shellQuote(String(value)) + (json ? " --json" : ""))
   }
   function useCursor() { var p = cursorProfile; if (p && !p.active) accounts.use(p.tool, p.id) }
   function loginCursor() { var p = cursorProfile; if (p) accounts.login(p.tool, p.id) }
   function shellCursor() { var p = cursorProfile; if (p && p.mode !== "link") accounts.shell(p.tool, p.id) }
+  function launchCursor() { var p = cursorProfile; if (p && p.signedIn) accounts.launch(p.tool, p.id) }
   function refreshNow() { accounts.usageUpdate() }
   function nextTool(toolId) { accounts.next(toolId) }
   function shellQuote(v) { return "'" + String(v).replace(/'/g, "'\\''") + "'" }
   // Bar.run() is a fire-and-forget shell exec; omarchy-launch-editor opens the
   // user's editor in a terminal for TUI editors, or as a window otherwise.
+  function addAccount() {
+    var label = addLabel.text.trim(); if (!label || !addTool.value) return
+    var id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    if (!id) return
+    accounts.add(addTool.value, id, label, "")
+    addLabel.text = ""
+  }
   function openEditor() { if (bar) bar.run("omarchy-launch-editor " + shellQuote(accounts.confDir + "/accounts.json")) }
 
   Accounts {
@@ -317,13 +339,13 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(470))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(640))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(root.view === "settings" ? 980 : 640))
     onOpenChanged: if (open) { root.view = "accounts"; if (root.selectedToolId === "" && root.tools.length) root.selectedToolId = root.tools[0].id }
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.view === "settings" && (warnSlider.dragging || rotateSlider.dragging)
+      blocked: root.editing || (root.view === "settings" && (warnSlider.dragging || rotateSlider.dragging))
 
       onMoveRequested: function(dx, dy) {
         if (root.view !== "accounts") return
@@ -341,6 +363,7 @@ Panel {
         else if (root.view !== "accounts") return
         else if (t === "i" || t === "I") root.loginCursor()
         else if (t === "t" || t === "T") root.shellCursor()
+        else if (t === "o" || t === "O") root.launchCursor()
       }
 
       Flickable {
@@ -519,6 +542,18 @@ Panel {
                   }
                 }
               }
+            }
+
+            // first-run hint: one account per tool so far
+            Text {
+              visible: root.onlyFirstAccounts
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "One account per tool so far. Press Login on a second row to add another subscription — rename accounts in Settings."
+              color: root.faint
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
 
             // ---------- Tool blocks: one (tab mode) or all ----------
@@ -781,6 +816,13 @@ Panel {
                       onClicked: accounts.use(row.p.tool, row.p.id)
                     }
                     Button {
+                      visible: row.hasCursor && row.p.signedIn
+                      width: parent.width; text: "Launch"; iconText: "󰐊"; bordered: true; selected: true
+                      foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption; iconSize: Style.font.caption; horizontalPadding: Style.space(6)
+                      tooltipText: "Open " + row.p.toolName + " in a terminal on this account (o)"
+                      onClicked: accounts.launch(row.p.tool, row.p.id)
+                    }
+                    Button {
                       visible: row.hasCursor && row.p.signedIn && row.p.mode !== "link"
                       width: parent.width; text: "Shell"; iconText: ""; bordered: true
                       foreground: root.foreground; fontFamily: root.fontFamily; fontSize: Style.font.caption; iconSize: Style.font.caption; horizontalPadding: Style.space(6)
@@ -826,6 +868,16 @@ Panel {
                     foreground: root.foreground; accent: root.accent
                     onToggled: accounts.setAlert("enabled", accounts.alerts.enabled === false ? "on" : "off")
                   }
+                }
+              }
+              Item {
+                width: parent.width; height: Style.space(24)
+                Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; textFormat: Text.PlainText; text: "Also notify when a warned window resets"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                ToggleSwitch {
+                  anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                  checked: accounts.alerts.resetNotify !== false
+                  foreground: root.foreground; accent: root.accent
+                  onToggled: accounts.setAlert("resetNotify", accounts.alerts.resetNotify === false ? "on" : "off")
                 }
               }
               Column {
@@ -917,6 +969,107 @@ Panel {
                 }
               }
               Text { width: parent.width; textFormat: Text.PlainText; text: "Auto-rotate needs published limits (Claude, Codex) and an env-mode tool. Tools with no signed-in account stay out of the bar regardless (see Display)."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // ---- Accounts: rename, add, remove ----
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              PanelSectionHeader { text: "ACCOUNTS"; foreground: root.foreground; fontFamily: root.fontFamily }
+              Text { width: parent.width; textFormat: Text.PlainText; text: "Name accounts however you like — Main / Alt, Work / Personal. The letter is what the bar shows."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+              Repeater {
+                model: root.profiles
+                Item {
+                  id: editRow
+                  required property var modelData
+                  width: parent.width; height: Style.space(32)
+                  Row {
+                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(6)
+                    Image { width: Style.space(14); height: width; anchors.verticalCenter: parent.verticalCenter; source: root.markSource(editRow.modelData.tool); sourceSize.width: width * 2; sourceSize.height: height * 2; fillMode: Image.PreserveAspectFit }
+                    Text { anchors.verticalCenter: parent.verticalCenter; width: Style.space(58); textFormat: Text.PlainText; text: editRow.modelData.toolName; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+                    TextField {
+                      id: labelField
+                      width: Style.space(120)
+                      text: editRow.modelData.label
+                      placeholderText: "name"
+                      font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                      foreground: root.foreground; accent: root.accent
+                      horizontalPadding: Style.spacing.controlGap; verticalPadding: Style.spacing.controlPaddingY
+                      maximumLength: 24
+                      onActiveFocusChanged: root.editing = activeFocus || glyphField.activeFocus
+                      onAccepted: accounts.rename(editRow.modelData.tool, editRow.modelData.id, text, glyphField.text)
+                    }
+                    TextField {
+                      id: glyphField
+                      width: Style.space(40)
+                      text: editRow.modelData.glyph
+                      placeholderText: "α"
+                      font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                      foreground: root.foreground; accent: root.accent
+                      horizontalPadding: Style.spacing.controlGap; verticalPadding: Style.spacing.controlPaddingY
+                      maximumLength: 2
+                      onActiveFocusChanged: root.editing = activeFocus || labelField.activeFocus
+                      onAccepted: accounts.rename(editRow.modelData.tool, editRow.modelData.id, labelField.text, text)
+                    }
+                    Button {
+                      anchors.verticalCenter: parent.verticalCenter
+                      visible: labelField.text !== editRow.modelData.label || glyphField.text !== editRow.modelData.glyph
+                      text: "Save"; bordered: true; selected: true
+                      foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption
+                      onClicked: accounts.rename(editRow.modelData.tool, editRow.modelData.id, labelField.text, glyphField.text)
+                    }
+                  }
+                  Text {
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                    visible: editRow.modelData.active
+                    textFormat: Text.PlainText; text: "active"; color: root.accent; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                  }
+                  PanelActionButton {
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                    visible: !editRow.modelData.active
+                    iconText: "󰆴"; tooltipText: "Forget this account (its files are kept)"
+                    foreground: root.foreground; hoverColor: root.urgent; fontFamily: root.fontFamily
+                    onClicked: accounts.removeProfile(editRow.modelData.tool, editRow.modelData.id)
+                  }
+                }
+              }
+              // add
+              Item {
+                width: parent.width; height: Style.space(32)
+                Row {
+                  anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(6)
+                  Dropdown {
+                    id: addTool
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(120)
+                    showLabel: false
+                    options: root.tools.map(function(t) { return t.id })
+                    value: root.tools.length ? root.tools[0].id : ""
+                    fontFamily: root.fontFamily
+                  }
+                  TextField {
+                    id: addLabel
+                    width: Style.space(120)
+                    placeholderText: "new account name"
+                    font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                    foreground: root.foreground; accent: root.accent
+                    horizontalPadding: Style.spacing.controlGap; verticalPadding: Style.spacing.controlPaddingY
+                    maximumLength: 24
+                    onActiveFocusChanged: root.editing = activeFocus
+                    onAccepted: root.addAccount()
+                  }
+                  Button {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Add"; iconText: "󰐕"; bordered: true; selected: addLabel.text.trim() !== ""
+                    enabled: addLabel.text.trim() !== "" && addTool.value !== ""
+                    foreground: root.foreground; accent: root.accent; fontFamily: root.fontFamily; fontSize: Style.font.caption
+                    onClicked: root.addAccount()
+                  }
+                }
+              }
+              Text { width: parent.width; textFormat: Text.PlainText; text: "A new account gets its own directory (or auth slot) next to the tool's default; press Login on its row afterwards."; color: root.faint; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
             }
 
             PanelSeparator { width: parent.width; foreground: root.foreground }

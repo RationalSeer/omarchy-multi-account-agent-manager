@@ -27,6 +27,9 @@ Item {
   property var setupSteps: []
   property bool setupComplete: true
   property bool setupChecked: false
+  property bool setupStale: false
+  property string setupVersion: ""
+  property bool healed: false
   property bool busy: statusProcess.running
   property bool actionRunning: actionProcess.running
   property string lastError: ""
@@ -121,7 +124,13 @@ Item {
           var parsed = JSON.parse(String(text || ""))
           root.setupSteps = parsed.steps || []
           root.setupComplete = parsed.complete !== false
+          root.setupStale = parsed.stale === true
+          root.setupVersion = String(parsed.setupVersion || "")
           root.setupChecked = true
+          // Self-heal after a plugin update: someone who ran setup before gets the
+          // regenerated hook, env file and timer without lifting a finger. Never
+          // runs for a user who has not opted into setup yet.
+          if (!root.healed && root.setupVersion !== "" && (root.setupStale || !root.setupComplete)) { root.healed = true; root.runSetup() }
         } catch (e) { console.warn("agent-accounts", "bad setup output", e) }
       }
     }
@@ -147,6 +156,19 @@ Item {
     run(["config", "alerts", key, String(value)])
   }
   function removeSetup() { run(["setup", "--remove"]) }
+  function launch(tool, profile) { run(profile ? ["launch", tool, profile] : ["launch", tool]) }
+  function rename(tool, profile, label, glyph) {
+    var args = ["rename", tool, profile]
+    if (label !== undefined && label !== null && label !== "") args.push("--label", label)
+    if (glyph !== undefined && glyph !== null) args.push("--glyph", glyph)
+    run(args)
+  }
+  function add(tool, id, label, glyph) {
+    var args = ["add", tool, id, "--label", label || id]
+    if (glyph) args.push("--glyph", glyph)
+    run(args)
+  }
+  function removeProfile(tool, profile) { run(["remove", tool, profile]) }
 
   function use(tool, profile) { run(["use", tool, profile]) }
   function next(tool) { run(["next", tool]) }

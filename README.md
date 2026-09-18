@@ -22,14 +22,19 @@ CLI you describe in a small JSON file.
   a login, and accent when one of its limits is past the warning threshold.
 - **Panel**: one tab per tool (mark, active letter, tint), and for the
   selected tool one card per account with masked email, plan, session/weekly
-  meters and reset times. **Login** is always visible; **Use** and **Shell**
-  appear when you hover or move the cursor onto a card. The `● Alpha` pill
-  cycles the tool's active account. Keys: `j`/`k` select, `Enter` use,
-  `i` sign in, `t` terminal, `h`/`l` previous/next tool, `a` all tools /
-  one tab, `r` refresh, `s` settings, `e` edit the registry, `?` legend,
-  `Esc` back/close. Accounts whose CLI publishes no limits (Grok, Cursor,
-  Gemini) get an activity meter instead — today's prompts/tokens against the
-  busiest day of the week, estimated from local session files.
+  meters and reset times. **Login** is always visible; **Use**, **Launch**
+  (open the CLI on that account) and **Shell** appear when you hover or move
+  the cursor onto a card. The `● Alpha` pill cycles the tool's active
+  account. Keys: `j`/`k` select, `Enter` use, `o` launch, `i` sign in,
+  `t` terminal, `h`/`l` previous/next tool, `a` all tools / one tab,
+  `r` refresh, `s` settings, `e` edit the registry, `?` legend, `Esc`
+  back/close. Accounts whose CLI publishes no limits (Grok, Cursor, Gemini)
+  get an activity meter instead — today's prompts/tokens against the busiest
+  day of the week, estimated from local session files.
+- **Your names**: accounts start as *Alpha* / *Omega* but are yours to name —
+  Main / Alt, Work / Personal, a client's name — with any one- or two-character
+  badge for the bar. Settings → Accounts renames, adds and forgets accounts;
+  `agent-acct rename` / `add` / `remove` do the same from a terminal.
 - **Settings page** (gear or `s`): alert and auto-rotate thresholds as
   sliders, notifications on/off, per-tool auto-rotate and in-bar switches,
   email display, bar options, the setup checklist with Run/Remove, and the
@@ -38,8 +43,9 @@ CLI you describe in a small JSON file.
   truth.
 
   ![settings page](docs/settings.png)
-- **Alerts**: a notification when a profile's window crosses the warning
-  threshold (default 85 %), once per crossing.
+- **Alerts**: a notification when an account's window crosses the warning
+  threshold (default 85 %), once per crossing — and, optionally, one when a
+  window you were warned about resets, so you remember to switch back.
 - **Auto-rotate** (opt-in per tool, `󰑐 auto` chip): when the active profile
   passes the rotate threshold (default 90 %) and another signed-in profile has
   headroom, the tool switches to it. New launches only — running sessions
@@ -85,6 +91,28 @@ omarchy plugin remove io.github.rationalseer.multi-account-agent-manager
 Your CLIs' own directories (`~/.claude`, `~/.codex`, …) and any `-omega`
 profile directories are never deleted; remove those yourself if you no longer
 want the second account's data.
+
+## Keybindings
+
+Anything the panel does is one IPC call away, so it binds like any Omarchy
+command. In `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + SHIFT + A", "Agent accounts", "omarchy-shell io.github.rationalseer.multi-account-agent-manager toggle")
+o.bind("SUPER + SHIFT + C", "Next Claude account", "omarchy-shell io.github.rationalseer.multi-account-agent-manager next claude")
+o.bind("SUPER + SHIFT + X", "Launch Codex on the active account", "agent-acct launch codex")
+```
+
+`agent-acct launch <tool> [<account>]` opens the CLI itself in a terminal on
+that account (switching a link-mode tool first if needed); `agent-acct shell`
+opens a plain terminal with the account's environment.
+
+## Updates
+
+`omarchy plugin update` pulls the new version. The bash hook, session env
+file and timer are regenerated automatically the next time the widget loads
+if you had run setup before; nothing is installed for people who never
+opted in.
 
 ## How a switch works
 
@@ -149,7 +177,8 @@ up only when its binary is on `PATH` and the definition is `enabled`.
 Thresholds for alerts and auto-rotate live in the registry (the settings page
 edits the same values): `agent-acct config alerts warnAt 0.85`,
 `agent-acct config alerts rotateAt 0.9`, `agent-acct config alerts enabled off`,
-`agent-acct config <tool> autoRotate on`, `agent-acct config <tool> barHidden on`.
+`agent-acct config alerts resetNotify off`, `agent-acct config <tool> autoRotate on`,
+`agent-acct config <tool> barHidden on`.
 
 ## Privacy and security
 

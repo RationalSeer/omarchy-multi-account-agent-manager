@@ -43,10 +43,13 @@ agent-acct $VERSION — subscription profiles for AI coding CLIs
   logout <tool> <profile>
   shell [<tool> <profile>]...           terminal with those profiles' env (env-mode tools)
   add <tool> <profile> [--dir D] [--label L] [--glyph G]
+  rename <tool> <profile> [--label L] [--glyph G]   change how an account is shown
   remove <tool> <profile>               forget a profile (keeps its files)
+  launch <tool> [<profile>]             open the CLI itself in a terminal, on that account
   config <tool> <key> <value>           per-tool option: autoRotate|barHidden|hidden on|off
   config alerts <warnAt|rotateAt> <0-1> alert thresholds (defaults 0.85 / 0.90)
   config alerts enabled on|off          limit notifications (auto-rotate is per tool)
+  config alerts resetNotify on|off      notify when a window you were warned about resets
   usage-update [--force] [<tool>[:<profile>]...]   regenerate usage records, then check alerts
   check                                 evaluate limit alerts / auto-rotate now
   env | apply | aliases | hook          env exports · push into Hyprland · bash aliases · hook path
@@ -269,8 +272,9 @@ profile_status() {
   local t=$1 p=$2 d cred ident='{}' email="" managed=true active exists=false rec label glyph auto bh
   local def tcred tmode tname tnote tcol tenv ejq efile ecmd eonly
   def=$(tool_def "$t")
-  IFS=$'\t' read -r tcred tmode tname tnote tcol tenv efile eonly < <(jq -r '[.credFile, .mode, (.name // .id), (.loginNote // ""), (.collector // ""), (.envVar // ""), (.identity.emailFile // ""), (.identity.emailCommandActiveOnly // false | tostring)] | @tsv' <<<"$def")
-  IFS=$'\t' read -r d label glyph active auto bh < <(reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t] as $T | $T.profiles[$p] as $P | [($P.dir // ""), ($P.label // $p), ($P.glyph // ""), (if $T.active == $p then "true" else "false" end), (if $T.autoRotate == true then "true" else "false" end), (if $T.barHidden == true then "true" else "false" end)] | @tsv')
+  # bash `read` collapses runs of whitespace separators, so empty fields would shift; join with the unit separator instead
+  IFS=$'\x1f' read -r tcred tmode tname tnote tcol tenv efile eonly < <(jq -r '[.credFile, .mode, (.name // .id), (.loginNote // ""), (.collector // ""), (.envVar // ""), (.identity.emailFile // ""), (.identity.emailCommandActiveOnly // false | tostring)] | map(tostring) | join("\u001f")' <<<"$def")
+  IFS=$'\x1f' read -r d label glyph active auto bh < <(reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t] as $T | $T.profiles[$p] as $P | [($P.dir // ""), ($P.label // $p), ($P.glyph // ""), (if $T.active == $p then "true" else "false" end), (if $T.autoRotate == true then "true" else "false" end), (if $T.barHidden == true then "true" else "false" end)] | join("\u001f")')
   d=$(expand "$d"); cred="$d/$tcred"; rec="$USAGE_DIR/$t-$p.json"
   [[ -d $d ]] && exists=true
   if [[ -s $cred ]]; then
@@ -332,7 +336,7 @@ cmd_status() {
 
 cmd_tools() {
   local all=false; [[ ${1:-} == --all ]] && all=true
-  jq -r '.[] | [.id, .name, .mode, (.envVar // .authPath // ""), (if .enabled then "enabled" else "disabled" end), .source, (.verified // "")] | @tsv' <<<"$TOOLS_JSON" | while IFS=$'\t' read -r id name mode where en src ver; do
+  jq -r '.[] | [.id, .name, .mode, (.envVar // .authPath // ""), (if .enabled then "enabled" else "disabled" end), .source, (.verified // "")] | join("\u001f")' <<<"$TOOLS_JSON" | while IFS=$'\x1f' read -r id name mode where en src ver; do
     local disc="—"; tool_discovered "$id" && disc="on PATH"
     $all || [[ $en == enabled ]] || continue
     printf '%-9s %-9s %-5s %-8s %-9s %-7s %s\n' "$id" "$name" "$mode" "$disc" "$en" "$src" "$where"
@@ -411,6 +415,8 @@ cmd_add() {
   [[ $p =~ ^[a-z0-9-]+$ ]] || die "profile id must be lowercase [a-z0-9-]"
   local dir label="${p^}" glyph=""; dir=$(default_profile_dir "$t" "$p")
   while (( $# )); do case $1 in --dir) dir=$2; shift 2 ;; --label) label=$2; shift 2 ;; --glyph) glyph=$2; shift 2 ;; *) die "unknown option $1" ;; esac; done
+  [[ -n $glyph ]] || glyph=${label:0:1}; glyph=${glyph^}
+  (( ${#glyph} <= 2 )) || die "glyph: at most two characters"
   safe_path "$dir" || die "directory may only contain letters, digits, _ . / ~ @ + , - and space"
   local label_re='^[A-Za-z0-9 _.-]{1,24}$'
   [[ $label =~ $label_re ]] || die "label: 1-24 letters, digits, space, _ . -"
@@ -418,6 +424,35 @@ cmd_add() {
     '.tools[$t] //= {active: $p, profiles: {}} | .tools[$t].profiles[$p] = {label: $label, glyph: $glyph, dir: $dir}' | reg_write
   write_env; write_hook; echo "added $t:$p → $dir"
 }
+cmd_rename() {
+  local t=$1 p=$2; shift 2; need_profile "$t" "$p"
+  local label="" glyph="" have_glyph=false
+  while (( $# )); do case $1 in --label) label=$2; shift 2 ;; --glyph) glyph=$2; have_glyph=true; shift 2 ;; *) die "unknown option $1" ;; esac; done
+  local label_re='^[A-Za-z0-9 _.-]{1,24}$'
+  if [[ -n $label ]]; then
+    [[ $label =~ $label_re ]] || die "label: 1-24 letters, digits, space, _ . -"
+    reg_read | jq --arg t "$t" --arg p "$p" --arg v "$label" '.tools[$t].profiles[$p].label = $v' | reg_write
+  fi
+  if $have_glyph; then
+    (( ${#glyph} <= 2 )) || die "glyph: at most two characters"
+    reg_read | jq --arg t "$t" --arg p "$p" --arg v "$glyph" '.tools[$t].profiles[$p].glyph = $v' | reg_write
+  fi
+  # the stock Agents panel tab carries the glyph/label: refresh that record
+  [[ -f $USAGE_DIR/$t-$p.json ]] && collect_one "$t" "$p" false || true
+  echo "$t:$p → $(profile_label "$t" "$p") $(profile_glyph "$t" "$p")"
+}
+
+# Open the CLI itself (not just a shell) in a terminal, on the given or the
+# active account. Link-mode tools must be switched first, since they read one
+# fixed auth file.
+cmd_launch() {
+  local t=$1 p=${2:-}; need_tool "$t"; [[ -n $p ]] || p=$(active_of "$t"); need_profile "$t" "$p"
+  if [[ $(tool_mode "$t") == link && $(active_of "$t") != "$p" ]]; then cmd_use "$t" "$p" >/dev/null; fi
+  [[ -d $(profile_dir "$t" "$p") ]] || ensure_dir "$t" "$p" >/dev/null
+  if [[ -n $(tool_env "$t") ]]; then launch_terminal env "$(tool_env "$t")=$(profile_dir "$t" "$p")" "$(tool_bin "$t")"
+  else launch_terminal "$(tool_bin "$t")"; fi
+}
+
 cmd_remove() {
   local t=$1 p=$2; need_profile "$t" "$p"
   [[ $(active_of "$t") == "$p" ]] && die "'$p' is active for $t; switch first"
@@ -430,8 +465,8 @@ cmd_config() {
   if [[ $t == alerts ]]; then
     case $k in
     warnAt|rotateAt) [[ $v =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || die "value: 0-1"; reg_read | jq --arg k "$k" --argjson v "$v" '.alerts[$k] = $v' | reg_write ;;
-    enabled) case $v in on|true|1|yes) v=true ;; off|false|0|no) v=false ;; *) die "value: on|off" ;; esac; reg_read | jq --argjson v "$v" '.alerts.enabled = $v' | reg_write ;;
-    *) die "alerts keys: warnAt rotateAt enabled" ;;
+    enabled|resetNotify) case $v in on|true|1|yes) v=true ;; off|false|0|no) v=false ;; *) die "value: on|off" ;; esac; reg_read | jq --arg k "$k" --argjson v "$v" '.alerts[$k] = $v' | reg_write ;;
+    *) die "alerts keys: warnAt rotateAt enabled resetNotify" ;;
     esac
   else
     need_tool "$t"; [[ $k == autoRotate || $k == hidden || $k == barHidden ]] || die "tool keys: autoRotate barHidden hidden"
@@ -505,7 +540,10 @@ cmd_check() {
             [[ $(alert_opt enabled true) == false ]] || notify "$(tool_name "$t") $(profile_label "$t" "$p"): $label at $(awk -v a="$pct" 'BEGIN{printf "%d", a*100}') %" "$(jq -r --arg l "$label" '.limits[] | select(.label == $l) | .resetsAt // "" | if . == "" then "" else "Resets \(.)" end' "$rec")"
             st=$(jq --arg k "$key" '.[$k] = 1' <<<"$st")
           fi
-        elif [[ $was != 0 ]]; then st=$(jq --arg k "$key" 'del(.[$k])' <<<"$st"); fi
+        elif [[ $was != 0 ]]; then
+          st=$(jq --arg k "$key" 'del(.[$k])' <<<"$st")
+          [[ $(alert_opt enabled true) == false || $(alert_opt resetNotify true) == false ]] || notify "$(tool_name "$t") $(profile_label "$t" "$p"): $label reset" "$(awk -v a="$pct" 'BEGIN{printf "%d", (1-a)*100}') % available again."
+        fi
       done < <(jq -r '.limits[]? | [.label, (.percent // 0)] | @tsv' "$rec")
       worst=$(jq -r '[.limits[]?.percent // 0] | max // 0' "$rec")
       # candidate for rotation: signed in, env mode, under the threshold
@@ -584,7 +622,11 @@ cmd_setup() {
   local mode=apply json=false purge=false s
   while (( $# )); do case $1 in --status) mode=status ;; --json) json=true ;; --remove) mode=remove ;; --purge) purge=true ;; *) die "setup [--status] [--json] [--remove] [--purge]" ;; esac; shift; done
   case $mode in
-  apply) for s in "${STEPS[@]}"; do step_check "$s" || step_apply "$s"; done; cmd_apply ;;
+  apply)
+    for s in "${STEPS[@]}"; do step_check "$s" || step_apply "$s"; done; cmd_apply
+    # regenerated hook/env may have changed with the plugin version
+    write_env; write_hook
+    reg_read | jq --arg v "$VERSION" '.setupVersion = $v' | reg_write ;;
   remove)
     for s in "${STEPS[@]}"; do step_remove "$s"; done
     if $purge; then
@@ -599,7 +641,8 @@ cmd_setup() {
     local ok=false; step_check "$s" && ok=true
     out=$(jq --arg id "$s" --arg label "$(step_label "$s")" --argjson ok "$ok" '. + [{id: $id, label: $label, ok: $ok}]' <<<"$out")
   done
-  if $json; then jq -n --argjson steps "$out" --arg v "$VERSION" --arg plugin "$PLUGIN_DIR" '{version: $v, pluginDir: $plugin, steps: $steps, complete: ($steps | all(.ok))}'
+  local sv=""; [[ -f $REG ]] && sv=$(jq -r '.setupVersion // ""' "$REG")
+  if $json; then jq -n --argjson steps "$out" --arg v "$VERSION" --arg sv "$sv" --arg plugin "$PLUGIN_DIR" '{version: $v, setupVersion: $sv, stale: ($sv != "" and $sv != $v), pluginDir: $plugin, steps: $steps, complete: ($steps | all(.ok))}'
   else jq -r '.[] | "\(if .ok then "✓" else "✗" end)  \(.label)"' <<<"$out"; fi
 }
 
@@ -617,7 +660,9 @@ login) (( $# == 2 )) || die "login <tool> <profile>"; cmd_login "$@" ;;
 logout) (( $# == 2 )) || die "logout <tool> <profile>"; cmd_logout "$@" ;;
 shell) cmd_shell "$@" ;;
 add) (( $# >= 2 )) || die "add <tool> <profile> [--dir D] [--label L] [--glyph G]"; cmd_add "$@" ;;
+rename) (( $# >= 2 )) || die "rename <tool> <profile> [--label L] [--glyph G]"; cmd_rename "$@" ;;
 remove) (( $# == 2 )) || die "remove <tool> <profile>"; cmd_remove "$@" ;;
+launch) (( $# >= 1 )) || die "launch <tool> [<profile>]"; cmd_launch "$@" ;;
 config) (( $# == 3 )) || die "config <tool|alerts> <key> <value>"; cmd_config "$@" ;;
 usage-update) cmd_usage_update "$@" ;;
 check) cmd_check ;;
