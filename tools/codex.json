@@ -1,0 +1,12 @@
+{
+  "id": "codex", "name": "Codex", "bin": "codex",
+  "mode": "env", "envVar": "CODEX_HOME", "defaultDir": "~/.codex",
+  "credFile": "auth.json",
+  "login": ["codex", "login"], "logout": ["codex", "logout"],
+  "shared": ["config.toml", "skills", "AGENTS.md", "prompts"],
+  "identity": {
+    "jq": "def b64url: gsub(\"-\";\"+\") | gsub(\"_\";\"/\") | @base64d; ((.tokens.id_token // \"\") | split(\".\") | if length > 1 then (try (.[1] | b64url | fromjson) catch {}) else {} end) as $c | {signedIn: (((.tokens.id_token // \"\") | length > 0) or ((.OPENAI_API_KEY // \"\") | length > 0)), email: ($c.email // \"\"), plan: ($c.\"https://api.openai.com/auth\".chatgpt_plan_type // (if (.OPENAI_API_KEY // \"\") != \"\" then \"api-key\" else \"\" end)), expiresAt: null, expired: ((.last_refresh // null) as $r | if $r then (try (($r | sub(\"\\\\.[0-9]+Z$\"; \"Z\") | fromdate) * 1000 < ($now - 30 * 86400000)) catch false) else false end)}"
+  },
+  "collector": "stock:omarchy-agent-usage-codex",
+  "enabled": true, "verified": "codex-cli 0.154.0 on Omarchy 4.0.2"
+}

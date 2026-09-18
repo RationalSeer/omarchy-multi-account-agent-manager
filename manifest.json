@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.rationalseer.multi-account-agent-manager",
+  "name": "Multi-Account Agent Manager",
+  "version": "0.3.0",
+  "author": "RationalSeer",
+  "license": "MIT",
+  "homepage": "https://github.com/RationalSeer/omarchy-multi-account-agent-manager",
+  "description": "Manage multiple accounts for every AI coding CLI — Claude Code, Codex, Grok, Cursor, Gemini, OpenCode — from the Omarchy bar: switch, sign in, watch limits, get alerts, auto-rotate at the limit.",
+  "tags": ["ai", "bar", "quickshell", "accounts", "claude", "codex", "grok", "cursor"],
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Multi-Account Agent Manager",
+    "description": "Active profile per tool in the bar; a panel with auth, plan and limits per profile and Use / Login / Shell actions, limit alerts and optional auto-rotate.",
+    "category": "AI",
+    "aliases": ["multi-account-agent-manager", "agent-accounts", "accounts"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "statusIntervalSec": 300,
+      "limitWarnPercent": 85,
+      "showGlyphs": true,
+      "compactBar": false,
+      "barShowUnsigned": false,
+      "emailDisplay": "masked"
+    },
+    "schema": [
+      { "key": "statusIntervalSec", "type": "integer", "label": "Status refresh (seconds)", "min": 30, "max": 3600, "step": 30, "defaultValue": 300 },
+      { "key": "limitWarnPercent", "type": "integer", "label": "Tint the bar when a limit reaches (%)", "min": 50, "max": 100, "step": 5, "defaultValue": 85 },
+      { "key": "showGlyphs", "type": "boolean", "label": "Show profile letters (α/Ω) in the bar", "defaultValue": true },
+      { "key": "compactBar", "type": "boolean", "label": "Compact bar: only tools that need attention show a letter", "defaultValue": false },
+      { "key": "barShowUnsigned", "type": "boolean", "label": "Also show tools with no signed-in profile in the bar", "defaultValue": false },
+      { "key": "emailDisplay", "type": "enum", "label": "Account email in the panel", "options": ["masked", "hidden", "full"], "defaultValue": "masked" }
+    ]
+  }
+}

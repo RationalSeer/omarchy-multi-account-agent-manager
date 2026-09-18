@@ -1,0 +1,610 @@
+#!/bin/bash
+# agent-acct — several subscription profiles per AI coding CLI, from the bar
+# or the terminal. Part of the Multi-Account Agent Manager Omarchy plugin.
+#
+# A tool is described by tools/<id>.json (plugin) or ~/.config/agent-accounts/
+# tools/<id>.json (user override, same id). Two modes:
+#   env  — the CLI picks its config directory from an env var; each profile
+#          is a directory, `use` exports the var for new launches.
+#   link — the CLI reads one fixed auth file; each profile is a slot and the
+#          fixed path is a symlink that `use` re-points.
+#
+# Registry:  ~/.config/agent-accounts/accounts.json
+# Env file:  ~/.config/agent-accounts/active.env    (sourced by the bash hook)
+# Records:   ~/.local/state/omarchy/agents/usage/<tool>-<profile>.json
+#            (the stock Agents panel shows one tab per record)
+set -euo pipefail
+
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+PLUGIN_DIR=$(cd "$(dirname "$SELF")/.." && pwd)
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agent-accounts"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-accounts"
+REG="$CONF_DIR/accounts.json"
+ENV_FILE="$CONF_DIR/active.env"
+HOOK_FILE="$CONF_DIR/shell-hook.bash"
+USAGE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/agents/usage"
+CACHE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-accounts"
+ALERTS="$STATE_DIR/alerts.json"
+LEGACY_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/agents"
+VERSION=$(jq -r '.version // "0"' "$PLUGIN_DIR/manifest.json" 2>/dev/null || echo 0)
+
+usage() {
+  cat <<EOF
+agent-acct $VERSION — subscription profiles for AI coding CLIs
+
+  setup [--status] [--json] [--remove] [--purge]   install/inspect/remove the optional wiring
+  init                                  create or extend the registry from discovered tools
+  tools [--all]                         tool definitions (discovered = binary on PATH)
+  list                                  profiles per tool, active marked
+  status [--json]                       auth, plan, limits per profile
+  use <tool> <profile>                  make a profile the default for new launches
+  next <tool>                           cycle to the next profile
+  login <tool> <profile>                sign a profile in (opens a terminal if needed)
+  logout <tool> <profile>
+  shell [<tool> <profile>]...           terminal with those profiles' env (env-mode tools)
+  add <tool> <profile> [--dir D] [--label L] [--glyph G]
+  remove <tool> <profile>               forget a profile (keeps its files)
+  config <tool> <key> <value>           per-tool option: autoRotate on|off, hidden on|off
+  config alerts <warnAt|rotateAt> <0-1> alert thresholds (defaults 0.85 / 0.90)
+  usage-update [--force] [<tool>[:<profile>]...]   regenerate usage records, then check alerts
+  check                                 evaluate limit alerts / auto-rotate now
+  env | apply | aliases | hook          env exports · push into Hyprland · bash aliases · hook path
+
+Plugin dir: $PLUGIN_DIR
+EOF
+}
+
+die() { echo "agent-acct: $*" >&2; exit 1; }
+expand() { local p=$1; p=${p/#\~/$HOME}; printf '%s\n' "$p"; }
+expand_env() { # expand ${VAR:-default} and ~ in a path spec from a tool definition (no eval)
+  local p=$1 out="" rest var def val
+  while [[ $p =~ ^([^$]*)\$\{([A-Z_][A-Z0-9_]*)(:-([^}]*))?\}(.*)$ ]]; do
+    out+=${BASH_REMATCH[1]}; var=${BASH_REMATCH[2]}; def=${BASH_REMATCH[4]}; rest=${BASH_REMATCH[5]}
+    val=${!var:-}; [[ -n $val ]] || val=$def
+    out+=$val; p=$rest
+  done
+  expand "$out$p"
+}
+# profile directories end up in sourced shell files, Lua strings and symlinks:
+# only a conservative character set is accepted.
+SAFE_PATH_RE='^[A-Za-z0-9_./~@+, -]+$'
+safe_path() { [[ $1 =~ $SAFE_PATH_RE && $1 != *..* ]]; }
+now_ms() { date +%s%3N; }
+have() { command -v "$1" >/dev/null 2>&1; }
+mkdir -p "$CONF_DIR" "$STATE_DIR" "$USAGE_DIR"
+
+# ---------- tool definitions ----------
+# Merged JSON array: plugin tools, then user overrides by id.
+TOOLS_JSON=$(
+  {
+    for f in "$PLUGIN_DIR"/tools/*.json; do [[ -f $f ]] && jq -c '. + {source:"plugin"}' "$f"; done
+    for f in "$CONF_DIR"/tools/*.json; do [[ -f $f ]] && jq -c '. + {source:"user"}' "$f"; done
+    true
+  } 2>/dev/null | jq -s 'reduce .[] as $t ({}; .[$t.id] = ($t + {enabled: (if $t.enabled == null then true else $t.enabled end)})) | [.[]]'
+)
+tool_def() { jq -c --arg t "$1" '.[] | select(.id == $t)' <<<"$TOOLS_JSON"; }
+tool_field() { tool_def "$1" | jq -r --arg k "$2" '.[$k] // empty'; }
+tool_known() { [[ -n $(tool_def "$1") ]]; }
+tool_bin() { tool_field "$1" bin; }
+tool_mode() { tool_field "$1" mode; }
+tool_env() { tool_field "$1" envVar; }
+tool_name() { local n; n=$(tool_field "$1" name); echo "${n:-$1}"; }
+tool_cred() { tool_field "$1" credFile; }
+tool_auth_path() { expand_env "$(tool_field "$1" authPath)"; }
+tool_collector() { tool_field "$1" collector; }
+tool_discovered() { # definition enabled and its binary on PATH
+  [[ $(tool_field "$1" enabled) == true ]] && have "$(tool_bin "$1")"
+}
+# tools shown: discovered, or forced on in the registry; minus hidden
+all_tool_ids() { jq -r '.[].id' <<<"$TOOLS_JSON"; }
+discovered_tool_ids() { local t; for t in $(all_tool_ids); do tool_discovered "$t" && echo "$t"; done; return 0; }
+
+# ---------- registry ----------
+reg_read() { [[ -f $REG ]] || die "no registry; run: agent-acct init"; cat "$REG"; }
+reg_write() { local tmp; tmp=$(mktemp "$CONF_DIR/.accounts.XXXXXX"); jq . >"$tmp" && mv "$tmp" "$REG"; }
+reg_tool_ids() { # registry tools in definition order, not hidden
+  local order; order=$(all_tool_ids | tr '\n' ' ')
+  reg_read | jq -r --arg order "$order" '($order | split(" ")) as $o | .tools | to_entries | map(select(.value.hidden != true)) | map(.key) | sort_by((($o | index(.)) // 99), .) | .[]'
+}
+profile_ids() { reg_read | jq -r --arg t "$1" '.tools[$t].profiles // {} | keys[]'; }
+profile_dir() { expand "$(reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t].profiles[$p].dir // empty')"; }
+profile_label() { reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t].profiles[$p].label // $p'; }
+profile_glyph() { reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t].profiles[$p].glyph // ""'; }
+active_of() { reg_read | jq -r --arg t "$1" '.tools[$t].active // empty'; }
+tool_opt() { reg_read | jq -r --arg t "$1" --arg k "$2" '.tools[$t][$k] // empty'; }
+alert_opt() { reg_read | jq -r --arg k "$1" --arg d "$2" '.alerts[$k] // $d'; }
+need_tool() { tool_known "$1" || die "unknown tool '$1' (agent-acct tools --all)"; }
+need_profile() { need_tool "$1"; [[ -n $(profile_dir "$1" "$2") ]] || die "no profile '$2' for $1 (agent-acct list)"; }
+
+default_profile_dir() {
+  local t=$1 p=$2
+  case $(tool_mode "$t") in
+  env) if [[ $p == alpha ]]; then tool_field "$t" defaultDir; else echo "$(tool_field "$t" defaultDir)-$p"; fi ;;
+  link) echo "~/.config/agent-accounts/slots/$t/$p" ;;
+  esac
+}
+tool_entry() {
+  jq -n --arg a "$(default_profile_dir "$1" alpha)" --arg o "$(default_profile_dir "$1" omega)" '{
+    active: "alpha", profiles: {
+      alpha: { label: "Alpha", glyph: "α", dir: $a },
+      omega: { label: "Omega", glyph: "Ω", dir: $o } } }'
+}
+
+migrate_legacy() { # v0.1 kept its state under ~/.config/omarchy/agents
+  [[ -f $LEGACY_CONF/accounts.json && ! -f $REG ]] || return 0
+  cp "$LEGACY_CONF/accounts.json" "$REG"
+  # cursor slots moved with the config dir
+  if [[ -d $LEGACY_CONF/cursor ]]; then
+    mkdir -p "$CONF_DIR/slots"; cp -a "$LEGACY_CONF/cursor" "$CONF_DIR/slots/cursor"
+    reg_read | jq --arg old "$LEGACY_CONF/cursor" --arg new "$CONF_DIR/slots/cursor" '(.tools.cursor.profiles // {}) |= with_entries(.value.dir |= (if startswith("~/.config/omarchy/agents/cursor") then sub("~/.config/omarchy/agents/cursor"; "~/.config/agent-accounts/slots/cursor") else . end))' | reg_write
+  fi
+  echo "migrated registry from $LEGACY_CONF" >&2
+}
+
+cmd_init() {
+  local t
+  migrate_legacy
+  if [[ ! -f $REG ]]; then echo '{"version":2,"tools":{},"alerts":{"warnAt":0.85,"rotateAt":0.9}}' | reg_write; echo "created $REG"; fi
+  for t in $(discovered_tool_ids); do
+    if ! reg_read | jq -e --arg t "$t" '.tools[$t]' >/dev/null; then
+      reg_read | jq --arg t "$t" --argjson e "$(tool_entry "$t")" '.tools[$t] = $e' | reg_write
+      echo "added tool $t (alpha = current login, omega = second subscription)"
+    fi
+  done
+  reg_read | jq '.alerts //= {warnAt:0.85, rotateAt:0.9} | .version = 2' | reg_write
+  for t in $(reg_tool_ids); do [[ $(tool_mode "$t") == link ]] && adopt_link "$t"; done
+  write_env; write_hook
+}
+
+# ---------- link-mode tools: fixed auth path ↔ slot ----------
+# A real file at the fixed path (first login, or the CLI rewriting it in place
+# of the link) is moved into the active slot and linked back, never lost.
+adopt_link() {
+  local t=$1 a d ap; a=$(active_of "$t"); [[ -n $a ]] || return 0
+  d=$(profile_dir "$t" "$a"); ap=$(tool_auth_path "$t"); [[ -n $ap ]] || return 0
+  mkdir -p "$d" "$(dirname "$ap")"; chmod 700 "$d" 2>/dev/null || true
+  if [[ -f $ap && ! -L $ap ]]; then mv "$ap" "$d/$(tool_cred "$t")"; echo "$t: adopted existing auth file into profile '$a'" >&2; fi
+  ln -sfn "$d/$(tool_cred "$t")" "$ap"
+}
+relink() { # point the fixed path at profile $2 of tool $1
+  local t=$1 p=$2 d ap; d=$(profile_dir "$t" "$p"); ap=$(tool_auth_path "$t"); mkdir -p "$d" "$(dirname "$ap")"
+  [[ -L $ap || ! -e $ap ]] || mv "$ap" "$(profile_dir "$t" "$(active_of "$t")")/$(tool_cred "$t")"
+  ln -sfn "$d/$(tool_cred "$t")" "$ap"
+}
+link_ok() { # is the fixed path a link into profile $2's slot?
+  local ap; ap=$(tool_auth_path "$1"); [[ -L $ap && $(readlink -f "$ap") == "$(readlink -f "$(profile_dir "$1" "$2")/$(tool_cred "$1")" 2>/dev/null || echo "$(profile_dir "$1" "$2")/$(tool_cred "$1")")" ]]
+}
+
+# ---------- env ----------
+env_tool_ids() { local t; for t in $(reg_tool_ids); do [[ -n $(tool_env "$t") ]] && echo "$t"; done; return 0; }
+write_env() {
+  local tmp; tmp=$(mktemp "$CONF_DIR/.active.XXXXXX")
+  {
+    echo "# generated by agent-acct — do not edit; run: agent-acct use <tool> <profile>"
+    echo "# explicit values already in the environment win (\${VAR:-default})."
+    local t p d
+    for t in $(reg_tool_ids); do
+      p=$(active_of "$t"); d=$(profile_dir "$t" "$p")
+      safe_path "$d" || { echo "agent-acct: skipping $t: unsafe profile path '$d'" >&2; continue; }
+      echo "AGENT_ACCT_${t^^}_PROFILE=\"$p\""
+      echo "AGENT_ACCT_${t^^}_DIR=\"$d\""
+      [[ -n $(tool_env "$t") ]] && echo "export $(tool_env "$t")=\"\${$(tool_env "$t"):-$d}\""
+    done
+  } >"$tmp"
+  mv "$tmp" "$ENV_FILE"
+}
+
+write_hook() {
+  local vars=() t; for t in $(env_tool_ids); do vars+=("$(tool_env "$t")"); done
+  {
+    cat <<'EOF'
+# agent-accounts bash hook: every interactive shell follows the active profile,
+# re-checked before each prompt so already-open terminals switch too.
+# Values you exported yourself are never touched.
+_agent_acct_env="${XDG_CONFIG_HOME:-$HOME/.config}/agent-accounts/active.env"
+EOF
+    echo "_agent_acct_vars=(${vars[*]})"
+    cat <<'EOF'
+declare -A _agent_acct_own=() _agent_acct_val=()
+_agent_acct_refresh() {
+  local stamp v
+  [[ -r $_agent_acct_env ]] || return 0
+  stamp=$(stat -c %Y "$_agent_acct_env" 2>/dev/null) || return 0
+  [[ $stamp == "${_agent_acct_stamp:-}" ]] && return 0
+  _agent_acct_stamp=$stamp
+  local -A had=()
+  for v in "${_agent_acct_vars[@]}"; do
+    had[$v]=${!v+set}
+    if [[ ${_agent_acct_own[$v]:-0} == 1 && ${!v:-} == "${_agent_acct_val[$v]:-}" ]]; then unset "$v"; had[$v]=; fi
+  done
+  . "$_agent_acct_env"
+  for v in "${_agent_acct_vars[@]}"; do
+    if [[ -z ${had[$v]} ]]; then _agent_acct_own[$v]=1; _agent_acct_val[$v]=${!v:-}; else _agent_acct_own[$v]=0; fi
+  done
+}
+_agent_acct_refresh
+case ";${PROMPT_COMMAND:-};" in
+  *";_agent_acct_refresh;"*) ;;
+  *) PROMPT_COMMAND="_agent_acct_refresh${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+esac
+# one-off overrides: claude-alpha, codex-omega, ...
+if command -v agent-acct >/dev/null 2>&1 && [[ -f "${_agent_acct_env%/*}/accounts.json" ]]; then
+  eval "$(agent-acct aliases 2>/dev/null)"
+fi
+EOF
+  } >"$HOOK_FILE"
+}
+
+cmd_aliases() {
+  local t p
+  for t in $(env_tool_ids); do
+    for p in $(profile_ids "$t"); do printf 'alias %s-%s=%q\n' "$t" "$p" "$(tool_env "$t")=$(profile_dir "$t" "$p") $(tool_bin "$t")"; done
+  done
+}
+cmd_env() { reg_read >/dev/null; write_env; cat "$ENV_FILE"; }
+cmd_apply() { # push active dirs into Hyprland so keybind/menu launches follow
+  have hyprctl && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 0
+  local t d; for t in $(env_tool_ids); do
+    d=$(profile_dir "$t" "$(active_of "$t")"); safe_path "$d" || continue
+    d=${d//\\/\\\\}; d=${d//\"/\\\"}
+    hyprctl eval "hl.env(\"$(tool_env "$t")\", \"$d\")" >/dev/null 2>&1 || true
+  done
+}
+
+ensure_dir() {
+  local t=$1 p=$2 d base src; d=$(profile_dir "$t" "$p")
+  [[ -d $d ]] || { mkdir -p "$d"; chmod 700 "$d"; echo "created $d"; }
+  base=$(expand "$(tool_field "$t" defaultDir)"); [[ -n $base && $d != "$base" ]] || return 0
+  for src in $(tool_def "$t" | jq -r '.shared[]? // empty'); do
+    [[ -e $base/$src && ! -e $d/$src ]] && ln -s "$base/$src" "$d/$src" && echo "shared $src → $d/$src"
+  done
+  return 0
+}
+
+# ---------- status ----------
+# One JSON object per profile. Identity comes from the tool's jq program over
+# its credential file; limits from the usage record. Tokens are never printed.
+profile_status() {
+  local t=$1 p=$2 d cred ident='{}' email="" managed=true active exists=false rec
+  d=$(profile_dir "$t" "$p"); cred="$d/$(tool_cred "$t")"; rec="$USAGE_DIR/$t-$p.json"
+  active=$([[ $(active_of "$t") == "$p" ]] && echo true || echo false)
+  [[ -d $d ]] && exists=true
+  if [[ -s $cred ]]; then
+    ident=$(jq -c --argjson now "$(now_ms)" -f <(tool_def "$t" | jq -r '.identity.jq') "$cred" 2>/dev/null || echo '{}')
+    if [[ $(jq -r '.signedIn // false' <<<"$ident") == true && $(jq -r '.email // ""' <<<"$ident") == "" ]]; then
+      local ef; ef=$(tool_field "$t" identity | jq -r '.emailFile // empty' 2>/dev/null || true)
+      if [[ -n $ef && -s $d/$ef ]]; then
+        email=$(jq -r "$(tool_def "$t" | jq -r '.identity.emailJq // ".email // \"\""')" "$d/$ef" 2>/dev/null || true)
+      elif tool_def "$t" | jq -e '.identity.emailCommand' >/dev/null; then
+        local only; only=$(tool_def "$t" | jq -r '.identity.emailCommandActiveOnly // false')
+        if [[ $only != true || $active == true ]]; then
+          local -a cmd; mapfile -t cmd < <(tool_def "$t" | jq -r '.identity.emailCommand[]')
+          local ev=(); [[ -n $(tool_env "$t") ]] && ev=("$(tool_env "$t")=$d")
+          email=$(env "${ev[@]}" "${cmd[@]}" 2>/dev/null | jq -r "$(tool_def "$t" | jq -r '.identity.emailJq // ".email // \"\""')" 2>/dev/null || true)
+        fi
+      fi
+      ident=$(jq --arg e "$email" '.email = $e' <<<"$ident")
+    fi
+  fi
+  if [[ $(tool_mode "$t") == link && $active == true ]]; then link_ok "$t" "$p" || managed=false; fi
+  local record='{}'; [[ -s $rec ]] && record=$(cat "$rec")
+  jq -n --arg tool "$t" --arg name "$(tool_name "$t")" --arg id "$p" --arg label "$(profile_label "$t" "$p")" --arg glyph "$(profile_glyph "$t" "$p")" \
+    --arg dir "$d" --arg mode "$(tool_mode "$t")" --argjson hasUsage "$([[ -n $(tool_collector "$t") ]] && echo true || echo false)" \
+    --arg loginNote "$(tool_field "$t" loginNote)" --argjson autoRotate "$([[ $(tool_opt "$t" autoRotate) == true ]] && echo true || echo false)" \
+    --argjson active "$active" --argjson exists "$exists" --argjson managed "$managed" --argjson ident "$ident" --argjson record "$record" \
+    --argjson warnAt "$(alert_opt warnAt 0.85)" '
+    ($ident.signedIn // false) as $signed | (($record.limits // []) | map(.percent // 0) | max // 0) as $worst |
+    {tool:$tool, toolName:$name, id:$id, label:$label, glyph:$glyph, dir:$dir, mode:$mode, hasUsage:$hasUsage, loginNote:$loginNote, autoRotate:$autoRotate,
+     active:$active, exists:$exists, signedIn:$signed, managed:$managed, email:($ident.email // ""),
+     plan: (if ($record.tierLabel // "") != "" then $record.tierLabel else ($ident.plan // "") end),
+     expiresAt: ($ident.expiresAt // null), expired: ($ident.expired // false),
+     limits: ($record.limits // []), worst: $worst, usageUpdatedAt: ($record.updatedAt // null), ready: ($record.ready // false),
+     usageStatusText: ($record.usageStatusText // ""), todayPrompts: ($record.todayPrompts // null),
+     attention: (if ($signed | not) then "login" elif ($ident.expired // false) then "expired" elif ($managed | not) then "unmanaged"
+                 elif $worst >= $warnAt then "limit" else "none" end)}'
+}
+
+cmd_status() {
+  local json=false; [[ ${1:-} == --json ]] && json=true
+  local out='[]' t p
+  for t in $(reg_tool_ids); do for p in $(profile_ids "$t"); do out=$(jq --argjson s "$(profile_status "$t" "$p")" '. + [$s]' <<<"$out"); done; done
+  if $json; then
+    jq -n --argjson profiles "$out" --arg now "$(date -u +%FT%TZ)" --arg v "$VERSION" --argjson alerts "$(reg_read | jq '.alerts // {}')" '{version:$v, updatedAt:$now, alerts:$alerts, profiles:$profiles}'
+  else
+    jq -r '.[] | [ (if .active then "●" else "○" end), .tool, .label, (if .signedIn then (.email | if . == "" then "signed in" else sub("(?<a>.{3}).*@"; "\(.a)…@") end) else "not signed in" end), (.plan // ""),
+      ((.limits // []) | map("\(.label | split(" ")[0]) \((.percent * 100) | round)%") | join("  ")), .attention ] | @tsv' <<<"$out" | column -t -s $'\t'
+  fi
+}
+
+cmd_tools() {
+  local all=false; [[ ${1:-} == --all ]] && all=true
+  jq -r '.[] | [.id, .name, .mode, (.envVar // .authPath // ""), (if .enabled then "enabled" else "disabled" end), .source, (.verified // "")] | @tsv' <<<"$TOOLS_JSON" | while IFS=$'\t' read -r id name mode where en src ver; do
+    local disc="—"; tool_discovered "$id" && disc="on PATH"
+    $all || [[ $en == enabled ]] || continue
+    printf '%-9s %-9s %-5s %-8s %-9s %-7s %s\n' "$id" "$name" "$mode" "$disc" "$en" "$src" "$where"
+  done
+}
+
+cmd_list() {
+  local t p a
+  for t in $(reg_tool_ids); do
+    a=$(active_of "$t"); echo "$(tool_name "$t") ($(tool_env "$t"))"
+    for p in $(profile_ids "$t"); do printf '  %s %-8s %s\n' "$([[ $p == "$a" ]] && echo '●' || echo '○')" "$(profile_label "$t" "$p")" "$(profile_dir "$t" "$p")"; done
+  done
+}
+
+# ---------- switching ----------
+notify() { have notify-send && notify-send -a "Multi-Account Agent Manager" "$1" "$2" 2>/dev/null || true; }
+cmd_use() {
+  local t=$1 p=$2 why=${3:-}; need_profile "$t" "$p"
+  reg_read | jq --arg t "$t" --arg p "$p" '.tools[$t].active = $p' | reg_write
+  [[ $(tool_mode "$t") == link ]] && relink "$t" "$p"
+  write_env; cmd_apply
+  local how="New launches use $(profile_dir "$t" "$p"). Running sessions are unchanged."
+  [[ $(tool_mode "$t") == link ]] && how="Auth link now points at '$p'. Switch with no $(tool_name "$t") session running."
+  notify "$(tool_name "$t") → $(profile_label "$t" "$p")${why:+ ($why)}" "$how"
+  echo "$(tool_name "$t"): active profile = $p ($(profile_dir "$t" "$p"))"
+}
+cmd_next() {
+  local t=$1; need_tool "$t"; local ids=() a i; mapfile -t ids < <(profile_ids "$t"); a=$(active_of "$t")
+  for i in "${!ids[@]}"; do [[ ${ids[$i]} == "$a" ]] && { cmd_use "$t" "${ids[$(( (i + 1) % ${#ids[@]} ))]}"; return; }; done
+  cmd_use "$t" "${ids[0]}"
+}
+
+# ---------- login / logout / shell ----------
+in_terminal() { [[ -t 0 && -t 1 ]]; }
+launch_terminal() { # new terminal window, fully detached from the caller
+  if have omarchy-launch-terminal; then setsid -f omarchy-launch-terminal "$@" >/dev/null 2>&1 </dev/null
+  elif have xdg-terminal-exec; then setsid -f xdg-terminal-exec "$@" >/dev/null 2>&1 </dev/null
+  else die "no terminal launcher found"; fi
+}
+run_tool_cmd() { # run the tool's login/logout array with the profile's env
+  local t=$1 p=$2 key=$3; local -a cmd; mapfile -t cmd < <(tool_def "$t" | jq -r --arg k "$key" '.[$k][]? // empty')
+  (( ${#cmd[@]} )) || { echo "$(tool_name "$t") has no $key command; use the CLI itself." >&2; return 0; }
+  if [[ $(tool_mode "$t") == env ]]; then env "$(tool_env "$t")=$(profile_dir "$t" "$p")" "${cmd[@]}"; else "${cmd[@]}"; fi
+}
+cmd_login() {
+  local t=$1 p=$2; need_profile "$t" "$p"
+  if ! in_terminal; then launch_terminal "$SELF" login "$t" "$p"; return; fi
+  ensure_dir "$t" "$p"
+  echo "Signing in $(tool_name "$t") profile '$(profile_label "$t" "$p")' ($(profile_dir "$t" "$p"))"
+  [[ -n $(tool_field "$t" loginNote) ]] && echo "$(tool_field "$t" loginNote)"
+  if [[ $(tool_mode "$t") == link && $(active_of "$t") != "$p" ]]; then cmd_use "$t" "$p"; fi
+  run_tool_cmd "$t" "$p" login || true
+  echo; echo "Refreshing usage for $t:$p …"; cmd_usage_update --force "$t:$p" || true
+  profile_status "$t" "$p" | jq -r '"\(.toolName) \(.label): \(if .signedIn then "signed in\(if .email != "" then " as \(.email)" else "" end)\(if .plan != "" then " (\(.plan))" else "" end)" else "not signed in" end)"'
+  [[ -n ${AGENT_ACCT_HOLD:-1} ]] && { echo; read -rp "Press Enter to close… " _ || true; }
+}
+cmd_logout() {
+  local t=$1 p=$2; need_profile "$t" "$p"
+  if [[ $(tool_mode "$t") == link && $(active_of "$t") != "$p" ]]; then rm -f "$(profile_dir "$t" "$p")/$(tool_cred "$t")"
+  else run_tool_cmd "$t" "$p" logout; fi
+  rm -f "$USAGE_DIR/$t-$p.json"
+}
+cmd_shell() {
+  local -a envs=(); local t p
+  if (( $# == 0 )); then for t in $(env_tool_ids); do envs+=("$(tool_env "$t")=$(profile_dir "$t" "$(active_of "$t")")"); done
+  else
+    while (( $# >= 2 )); do t=$1; p=$2; need_profile "$t" "$p"; [[ -n $(tool_env "$t") ]] || die "$t has no per-profile env; use: agent-acct use $t $p"; envs+=("$(tool_env "$t")=$(profile_dir "$t" "$p")"); shift 2; done
+    (( $# == 0 )) || die "shell takes <tool> <profile> pairs"
+  fi
+  launch_terminal env "${envs[@]}" "${SHELL:-bash}"
+}
+
+# ---------- add / remove / config ----------
+cmd_add() {
+  local t=$1 p=$2; shift 2; need_tool "$t"
+  [[ $p =~ ^[a-z0-9-]+$ ]] || die "profile id must be lowercase [a-z0-9-]"
+  local dir label="${p^}" glyph=""; dir=$(default_profile_dir "$t" "$p")
+  while (( $# )); do case $1 in --dir) dir=$2; shift 2 ;; --label) label=$2; shift 2 ;; --glyph) glyph=$2; shift 2 ;; *) die "unknown option $1" ;; esac; done
+  safe_path "$dir" || die "directory may only contain letters, digits, _ . / ~ @ + , - and space"
+  local label_re='^[A-Za-z0-9 _.-]{1,24}$'
+  [[ $label =~ $label_re ]] || die "label: 1-24 letters, digits, space, _ . -"
+  reg_read | jq --arg t "$t" --arg p "$p" --arg dir "$dir" --arg label "$label" --arg glyph "$glyph" \
+    '.tools[$t] //= {active: $p, profiles: {}} | .tools[$t].profiles[$p] = {label: $label, glyph: $glyph, dir: $dir}' | reg_write
+  write_env; write_hook; echo "added $t:$p → $dir"
+}
+cmd_remove() {
+  local t=$1 p=$2; need_profile "$t" "$p"
+  [[ $(active_of "$t") == "$p" ]] && die "'$p' is active for $t; switch first"
+  reg_read | jq --arg t "$t" --arg p "$p" 'del(.tools[$t].profiles[$p])' | reg_write
+  rm -rf "$USAGE_DIR/$t-$p.json" "$CACHE_BASE/$t-$p" 2>/dev/null || true
+  write_env; echo "removed $t:$p (its files are kept)"
+}
+cmd_config() {
+  local t=$1 k=$2 v=$3
+  if [[ $t == alerts ]]; then
+    [[ $k == warnAt || $k == rotateAt ]] || die "alerts keys: warnAt rotateAt"
+    reg_read | jq --arg k "$k" --argjson v "$v" '.alerts[$k] = $v' | reg_write
+  else
+    need_tool "$t"; [[ $k == autoRotate || $k == hidden ]] || die "tool keys: autoRotate hidden"
+    case $v in on|true|1|yes) v=true ;; off|false|0|no) v=false ;; *) die "value: on|off" ;; esac
+    reg_read | jq --arg t "$t" --arg k "$k" --argjson v "$v" '.tools[$t][$k] = $v' | reg_write
+    write_env
+  fi
+  echo "$t.$k = $v"
+}
+
+# ---------- usage records ----------
+# Stock collectors run with the profile's directory and a private cache (they
+# keep a limits-probe cache at a fixed path that would otherwise leak between
+# profiles); local collectors estimate from session files. Records get
+# id/name rewritten so the stock Agents panel shows "Claude · Alpha" tabs.
+collect_one() {
+  local t=$1 p=$2 force=$3 d cache tmp record col; col=$(tool_collector "$t"); [[ -n $col ]] || return 0
+  d=$(profile_dir "$t" "$p"); [[ -d $d ]] || return 0
+  cache="$CACHE_BASE/$t-$p"; mkdir -p "$cache"
+  case $col in
+  stock:*)
+    have "${col#stock:}" || return 0
+    local -a flags=(); $force && flags+=(--force)
+    record=$(env "$(tool_env "$t")=$d" XDG_CACHE_HOME="$cache" "${col#stock:}" "${flags[@]}") || { echo "agent-acct: $t:$p collector failed" >&2; return 1; } ;;
+  local)
+    record=$("$PLUGIN_DIR/bin/collect-local" --tool "$t" --dir "$d" --def <(tool_def "$t")) || return 0 ;;
+  bin:*)
+    record=$("$PLUGIN_DIR/bin/${col#bin:}" --tool "$t" --dir "$d" --def <(tool_def "$t")) || return 0 ;;
+  esac
+  [[ -n $record ]] && jq -e . >/dev/null 2>&1 <<<"$record" || return 0
+  tmp=$(mktemp "$USAGE_DIR/.$t-$p.XXXXXX")
+  jq --arg id "$t-$p" --arg name "$(tool_name "$t") · $(profile_label "$t" "$p")" --arg profile "$p" --arg tool "$t" \
+    '.id = $id | .name = $name | .profile = $profile | .tool = $tool' <<<"$record" >"$tmp"
+  mv "$tmp" "$USAGE_DIR/$t-$p.json"
+}
+cmd_usage_update() {
+  local force=false; local -a targets=()
+  while (( $# )); do case $1 in --force) force=true; shift ;; *) targets+=("$1"); shift ;; esac; done
+  if (( ${#targets[@]} == 0 )); then local t p; for t in $(reg_tool_ids); do for p in $(profile_ids "$t"); do targets+=("$t:$p"); done; done; fi
+  local pids=() status=0 tp
+  for tp in "${targets[@]}"; do
+    local t=${tp%%:*} p=${tp#*:}
+    if [[ $tp != *:* ]]; then for p in $(profile_ids "$t"); do collect_one "$t" "$p" $force & pids+=($!); done
+    else collect_one "$t" "$p" $force & pids+=($!); fi
+  done
+  for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+  cmd_check || true
+  return $status
+}
+
+# ---------- alerts + auto-rotate (E3) ----------
+# Notify once when a window crosses warnAt (re-armed when it drops back), and
+# optionally rotate an env-mode tool to a signed-in profile with headroom when
+# the active one passes rotateAt. Link-mode tools never rotate automatically.
+cmd_check() {
+  local warn rotate st t p rec worst label key was
+  warn=$(alert_opt warnAt 0.85); rotate=$(alert_opt rotateAt 0.9)
+  st='{}'; [[ -s $ALERTS ]] && st=$(cat "$ALERTS")
+  for t in $(reg_tool_ids); do
+    local best="" bestWorst=2 active; active=$(active_of "$t")
+    for p in $(profile_ids "$t"); do
+      rec="$USAGE_DIR/$t-$p.json"; [[ -s $rec ]] || continue
+      while IFS=$'\t' read -r label pct; do
+        key="$t:$p:$label"; was=$(jq -r --arg k "$key" '.[$k] // 0' <<<"$st")
+        if awk -v a="$pct" -v b="$warn" 'BEGIN{exit !(a>=b)}'; then
+          if [[ $was == 0 ]]; then
+            notify "$(tool_name "$t") $(profile_label "$t" "$p"): $label at $(awk -v a="$pct" 'BEGIN{printf "%d", a*100}') %" "$(jq -r --arg l "$label" '.limits[] | select(.label == $l) | .resetsAt // "" | if . == "" then "" else "Resets \(.)" end' "$rec")"
+            st=$(jq --arg k "$key" '.[$k] = 1' <<<"$st")
+          fi
+        elif [[ $was != 0 ]]; then st=$(jq --arg k "$key" 'del(.[$k])' <<<"$st"); fi
+      done < <(jq -r '.limits[]? | [.label, (.percent // 0)] | @tsv' "$rec")
+      worst=$(jq -r '[.limits[]?.percent // 0] | max // 0' "$rec")
+      # candidate for rotation: signed in, env mode, under the threshold
+      if [[ $p != "$active" && $(tool_mode "$t") == env ]] && awk -v a="$worst" -v b="$rotate" 'BEGIN{exit !(a<b)}'; then
+        local cred="$(profile_dir "$t" "$p")/$(tool_cred "$t")"
+        if [[ -s $cred ]] && awk -v a="$worst" -v b="$bestWorst" 'BEGIN{exit !(a<b)}'; then best=$p; bestWorst=$worst; fi
+      fi
+    done
+    if [[ $(tool_opt "$t" autoRotate) == true && -n $best && -s $USAGE_DIR/$t-$active.json ]]; then
+      worst=$(jq -r '[.limits[]?.percent // 0] | max // 0' "$USAGE_DIR/$t-$active.json")
+      if awk -v a="$worst" -v b="$rotate" 'BEGIN{exit !(a>=b)}'; then cmd_use "$t" "$best" "auto-rotate: $(profile_label "$t" "$active") at $(awk -v a="$worst" 'BEGIN{printf "%d", a*100}') %" >/dev/null; fi
+    fi
+  done
+  printf '%s\n' "$st" >"$ALERTS"
+}
+
+# ---------- setup (E1) ----------
+BIN_LINK="$HOME/.local/bin/agent-acct"
+BASHRC="$HOME/.bashrc"; BASH_MARK="# agent-accounts: follow the active AI-CLI profile"
+UWSM_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/uwsm/env.d/20-agent-accounts"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"; UNIT=agent-accounts-usage
+step_check() {
+  case $1 in
+  registry) [[ -f $REG ]] ;;
+  path) [[ -L $BIN_LINK && $(readlink -f "$BIN_LINK") == "$SELF" ]] ;;
+  bashrc) grep -qF "$BASH_MARK" "$BASHRC" 2>/dev/null ;;
+  session-env) [[ -f $UWSM_ENV ]] ;;
+  timer) systemctl --user is-enabled "$UNIT.timer" >/dev/null 2>&1 && grep -qF "ExecStart=$SELF " "$UNIT_DIR/$UNIT.service" 2>/dev/null ;;
+  stock-tabs) local sj="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"; [[ -f $sj ]] && jq -e '[.bar.layout[][] | select(.id == "omarchy.agents") | .providers.claude.enabled == false and .providers.codex.enabled == false] | any' "$sj" >/dev/null 2>&1 ;;
+  esac
+}
+step_label() {
+  case $1 in
+  registry) echo "Profile registry ($REG)" ;;
+  path) echo "agent-acct on PATH (~/.local/bin → plugin)" ;;
+  bashrc) echo "Bash hook in ~/.bashrc (new and open terminals follow a switch)" ;;
+  session-env) echo "Session env for keybind launches (~/.config/uwsm/env.d)" ;;
+  timer) echo "Usage refresh timer (systemd --user, 15 min)" ;;
+  stock-tabs) echo "Stock Agents panel shows one tab per profile" ;;
+  esac
+}
+step_apply() {
+  case $1 in
+  registry) cmd_init >/dev/null ;;
+  path) mkdir -p "$(dirname "$BIN_LINK")"; [[ -e $BIN_LINK && ! -L $BIN_LINK ]] && mv "$BIN_LINK" "$BIN_LINK.pre-plugin"; ln -sfn "$SELF" "$BIN_LINK" ;;
+  bashrc)
+    [[ -f $BASHRC ]] && cp "$BASHRC" "$BASHRC.bak.agent-accounts"
+    # drop the v0.1 line if present
+    sed -i '/# agent-acct: follow the active Claude\/Codex subscription profile/,+1d' "$BASHRC" 2>/dev/null || true
+    printf '\n%s\n[[ -r %s ]] && source %s\n' "$BASH_MARK" "$HOOK_FILE" "$HOOK_FILE" >>"$BASHRC" ;;
+  session-env)
+    mkdir -p "$(dirname "$UWSM_ENV")"; rm -f "$(dirname "$UWSM_ENV")/20-agent-acct"
+    printf '# agent-accounts: the session starts with the active AI-CLI profiles\n[ -r "%s" ] && . "%s"\n' "$ENV_FILE" "$ENV_FILE" >"$UWSM_ENV" ;;
+  timer)
+    mkdir -p "$UNIT_DIR"
+    systemctl --user disable --now agent-acct-usage.timer >/dev/null 2>&1 || true; rm -f "$UNIT_DIR"/agent-acct-usage.{service,timer}
+    printf '[Unit]\nDescription=Refresh AI-CLI profile usage records for Multi-Account Agent Manager\n\n[Service]\nType=oneshot\nExecStart=%s usage-update\nNice=10\n' "$SELF" >"$UNIT_DIR/$UNIT.service"
+    printf '[Unit]\nDescription=Refresh Multi-Account Agent Manager usage every 15 minutes\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=15min\nRandomizedDelaySec=60\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' >"$UNIT_DIR/$UNIT.timer"
+    systemctl --user daemon-reload; systemctl --user enable --now "$UNIT.timer" >/dev/null ;;
+  stock-tabs) have omarchy-bar && omarchy-bar set omarchy.agents providers '{"claude":{"enabled":false},"codex":{"enabled":false},"fireworks":{"enabled":true}}' --json >/dev/null 2>&1 || true ;;
+  esac
+}
+step_remove() {
+  case $1 in
+  path) [[ -L $BIN_LINK ]] && rm -f "$BIN_LINK"; [[ -e $BIN_LINK.pre-plugin ]] && mv "$BIN_LINK.pre-plugin" "$BIN_LINK" ;;
+  bashrc) sed -i "/$(printf '%s' "$BASH_MARK" | sed 's/[][\/.*^$]/\\&/g')/,+1d" "$BASHRC" 2>/dev/null || true ;;
+  session-env) rm -f "$UWSM_ENV" ;;
+  timer) systemctl --user disable --now "$UNIT.timer" >/dev/null 2>&1 || true; rm -f "$UNIT_DIR/$UNIT.service" "$UNIT_DIR/$UNIT.timer"; systemctl --user daemon-reload ;;
+  stock-tabs) have omarchy-bar && omarchy-bar set omarchy.agents providers '{"claude":{"enabled":true},"codex":{"enabled":true},"fireworks":{"enabled":true}}' --json >/dev/null 2>&1 || true ;;
+  registry) : ;;
+  esac
+  return 0
+}
+STEPS=(registry path bashrc session-env timer stock-tabs)
+cmd_setup() {
+  local mode=apply json=false purge=false s
+  while (( $# )); do case $1 in --status) mode=status ;; --json) json=true ;; --remove) mode=remove ;; --purge) purge=true ;; *) die "setup [--status] [--json] [--remove] [--purge]" ;; esac; shift; done
+  case $mode in
+  apply) for s in "${STEPS[@]}"; do step_check "$s" || step_apply "$s"; done; cmd_apply ;;
+  remove)
+    for s in "${STEPS[@]}"; do step_remove "$s"; done
+    if $purge; then
+      local t p
+      for t in $(reg_tool_ids 2>/dev/null); do for p in $(profile_ids "$t"); do rm -f "$USAGE_DIR/$t-$p.json"; done; done
+      rm -rf "$CONF_DIR" "$STATE_DIR" "$CACHE_BASE"
+    fi
+    ;;
+  esac
+  local out='[]'
+  for s in "${STEPS[@]}"; do
+    local ok=false; step_check "$s" && ok=true
+    out=$(jq --arg id "$s" --arg label "$(step_label "$s")" --argjson ok "$ok" '. + [{id: $id, label: $label, ok: $ok}]' <<<"$out")
+  done
+  if $json; then jq -n --argjson steps "$out" --arg v "$VERSION" --arg plugin "$PLUGIN_DIR" '{version: $v, pluginDir: $plugin, steps: $steps, complete: ($steps | all(.ok))}'
+  else jq -r '.[] | "\(if .ok then "✓" else "✗" end)  \(.label)"' <<<"$out"; fi
+}
+
+# ---------- dispatch ----------
+cmd=${1:-}; shift || true
+case $cmd in
+setup) cmd_setup "$@" ;;
+init) cmd_init ;;
+tools) cmd_tools "$@" ;;
+list) cmd_list ;;
+status) cmd_status "$@" ;;
+use) (( $# == 2 )) || die "use <tool> <profile>"; cmd_use "$@" ;;
+next) (( $# == 1 )) || die "next <tool>"; cmd_next "$@" ;;
+login) (( $# == 2 )) || die "login <tool> <profile>"; cmd_login "$@" ;;
+logout) (( $# == 2 )) || die "logout <tool> <profile>"; cmd_logout "$@" ;;
+shell) cmd_shell "$@" ;;
+add) (( $# >= 2 )) || die "add <tool> <profile> [--dir D] [--label L] [--glyph G]"; cmd_add "$@" ;;
+remove) (( $# == 2 )) || die "remove <tool> <profile>"; cmd_remove "$@" ;;
+config) (( $# == 3 )) || die "config <tool|alerts> <key> <value>"; cmd_config "$@" ;;
+usage-update) cmd_usage_update "$@" ;;
+check) cmd_check ;;
+env) cmd_env ;;
+apply) cmd_apply ;;
+aliases) cmd_aliases ;;
+hook) echo "$HOOK_FILE" ;;
+version) echo "$VERSION" ;;
+""|-h|--help|help) usage ;;
+*) die "unknown command '$cmd' (agent-acct --help)" ;;
+esac

@@ -1,0 +1,22 @@
+name: validate
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: manifest is valid JSON with the required fields
+        run: |
+          jq -e '.schemaVersion == 1 and .id and .kinds and .entryPoints.barWidget' manifest.json
+          for f in tools/*.json; do jq -e '.id and .name and .bin and .mode and .credFile and .identity.jq' "$f" >/dev/null; done
+      - name: shell and python syntax
+        run: |
+          bash -n bin/agent-acct
+          python3 -m py_compile bin/collect-local
+      - name: CLI runs in a fresh home
+        run: |
+          export HOME=$(mktemp -d)
+          bin/agent-acct tools --all
+          bin/agent-acct init
+          bin/agent-acct status --json | jq -e '.profiles | type == "array"'
+          bin/agent-acct setup --status --json | jq -e '.steps | length > 0'

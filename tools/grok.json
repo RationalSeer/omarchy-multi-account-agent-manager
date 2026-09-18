@@ -1,0 +1,13 @@
+{
+  "id": "grok", "name": "Grok", "bin": "grok",
+  "mode": "env", "envVar": "GROK_HOME", "defaultDir": "~/.grok",
+  "credFile": "auth.json",
+  "login": ["grok", "login"], "logout": ["grok", "logout"],
+  "shared": ["config.toml", "rules", "workflows"],
+  "identity": {
+    "jq": "([.[]][0] // {}) as $r | {signedIn: ((($r.key // \"\") | length > 0) or (($r.refresh_token // \"\") | length > 0)), email: ($r.email // \"\"), plan: \"\", expiresAt: null, expired: (($r.expires_at // null) as $e | if $e and (($r.refresh_token // \"\") == \"\") then (try (($e | sub(\"\\\\.[0-9]+Z$\"; \"Z\") | fromdate) * 1000 < $now) catch false) else false end)}"
+  },
+  "collector": "local",
+  "localUsage": { "dirs": ["~/.grok/sessions"], "note": "Grok publishes no limits; usage is estimated from local session files." },
+  "enabled": true, "verified": "grok 1.0.30 (GROK_HOME documented in its user guide)"
+}
