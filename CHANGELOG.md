@@ -2,6 +2,11 @@
 
 ## 0.3.0 — 2026-09-18
 
+- Usage records use short names ("Codex Ω") so the stock Agents panel's chip
+  row fits four or more accounts.
+- Local collector reads sqlite session indexes (Grok), scans only real session
+  directories, and writes no record when nothing was used — no phantom tabs.
+
 - Renamed to Multi-Account Agent Manager (`io.github.rationalseer.multi-account-agent-manager`).
 - Profile rows show the provider mark with the profile letter pinned to it.
 - `emailDisplay` setting: masked (default), hidden, full.

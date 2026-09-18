@@ -446,7 +446,9 @@ collect_one() {
   esac
   [[ -n $record ]] && jq -e . >/dev/null 2>&1 <<<"$record" || return 0
   tmp=$(mktemp "$USAGE_DIR/.$t-$p.XXXXXX")
-  jq --arg id "$t-$p" --arg name "$(tool_name "$t") · $(profile_label "$t" "$p")" --arg profile "$p" --arg tool "$t" \
+  # short names: the stock panel's chip row splits its width evenly and does not elide
+  local g; g=$(profile_glyph "$t" "$p"); [[ -n $g ]] || g=$(profile_label "$t" "$p")
+  jq --arg id "$t-$p" --arg name "$(tool_name "$t") $g" --arg profile "$p" --arg tool "$t" \
     '.id = $id | .name = $name | .profile = $profile | .tool = $tool' <<<"$record" >"$tmp"
   mv "$tmp" "$USAGE_DIR/$t-$p.json"
 }

@@ -8,6 +8,6 @@
     "jq": "([.[]][0] // {}) as $r | {signedIn: ((($r.key // \"\") | length > 0) or (($r.refresh_token // \"\") | length > 0)), email: ($r.email // \"\"), plan: \"\", expiresAt: null, expired: (($r.expires_at // null) as $e | if $e and (($r.refresh_token // \"\") == \"\") then (try (($e | sub(\"\\\\.[0-9]+Z$\"; \"Z\") | fromdate) * 1000 < $now) catch false) else false end)}"
   },
   "collector": "local",
-  "localUsage": { "dirs": ["~/.grok/sessions"], "note": "Grok publishes no limits; usage is estimated from local session files." },
+  "localUsage": { "dirs": ["~/.grok/sessions"], "sqlite": [{ "path": "~/.grok/sessions/session_search.sqlite", "table": "session_docs", "timeColumn": "updated_at" }], "note": "Grok publishes no limits; usage is estimated from its local session index." },
   "enabled": true, "verified": "grok 1.0.30 (GROK_HOME documented in its user guide)"
 }

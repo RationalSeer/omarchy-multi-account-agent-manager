@@ -32,9 +32,9 @@ CLI you describe in a small JSON file.
   headroom, the tool switches to it. New launches only — running sessions
   never change.
 - **Stock Agents panel integration**: Omarchy's own `omarchy.agents` widget
-  shows one tab per profile ("Claude · Alpha", "Codex · Omega") with its full
-  charts, because this plugin writes per-profile usage records in the format
-  the stock collectors use.
+  shows one tab per account ("Claude α", "Codex Ω") with its full charts,
+  because this plugin writes per-account usage records in the format the
+  stock collectors use. Accounts appear there once they have recorded usage.
 
   ![stock Agents panel with one tab per profile](docs/stock-agents-tabs.png)
 - **CLI**: everything the bar does is `agent-acct …` in a terminal.

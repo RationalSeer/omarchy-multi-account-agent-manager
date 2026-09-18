@@ -7,7 +7,7 @@ token-usage objects it recognises. Prints one record in the same contract the
 stock collectors use, so the Agents panel can show it; `usageStatusText` says
 it is an estimate. No network, no credentials.
 """
-import argparse, datetime as dt, glob, json, os, sys
+import argparse, datetime as dt, glob, json, os, sqlite3, sys
 
 TOKEN_KEYS = {
   "inputTokens": ("input_tokens", "prompt_tokens", "inputTokens", "promptTokens"),
@@ -141,7 +141,37 @@ def main():
         if day == today:
           today_models[model] = today_models.get(model, 0) + total
 
-  if not per_day:
+  # session indexes (sqlite): one row per session, dated by a time column in s or ms
+  for spec in local.get("sqlite") or []:
+    path = expand(spec.get("path") or "", home)
+    if default_dir and path.startswith(default_dir) and profile_dir != default_dir:
+      path = profile_dir + path[len(default_dir):]
+    table, col = spec.get("table"), spec.get("timeColumn")
+    if not (os.path.isfile(path) and table and col):
+      continue
+    try:
+      con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+      rows = con.execute('SELECT "%s" FROM "%s"' % (col.replace('"', ''), table.replace('"', ''))).fetchall()
+      con.close()
+    except sqlite3.Error:
+      continue
+    for (ts,) in rows:
+      try:
+        ts = float(ts)
+      except (TypeError, ValueError):
+        continue
+      if ts > 1e12:
+        ts /= 1000.0
+      if ts < cutoff:
+        continue
+      bucket = per_day.setdefault(dt.date.fromtimestamp(ts), {"sessions": 0, "prompts": 0, "tokens": 0})
+      bucket["sessions"] += 1
+
+  # a record with no prompts, tokens or indexed sessions is noise (a stray
+  # config file, say); print nothing so the panels show nothing
+  if not per_day or not any(b["prompts"] or b["tokens"] or b["sessions"] for b in per_day.values()):
+    return 0
+  if not any(b["prompts"] or b["tokens"] for b in per_day.values()) and not (local.get("sqlite")):
     return 0
   days = sorted(per_day)
   recent = []
