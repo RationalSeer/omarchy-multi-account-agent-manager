@@ -1,13 +1,27 @@
 {
-  "id": "opencode", "name": "OpenCode", "bin": "opencode",
-  "mode": "link", "authPath": "${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json",
+  "id": "opencode",
+  "name": "OpenCode",
+  "order": 50,
+  "bin": "opencode",
+  "mode": "link",
+  "authPath": "${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json",
   "credFile": "auth.json",
-  "login": ["opencode", "auth", "login"], "logout": ["opencode", "auth", "logout"],
+  "login": [
+    "opencode",
+    "auth",
+    "login"
+  ],
+  "logout": [
+    "opencode",
+    "auth",
+    "logout"
+  ],
   "loginNote": "OpenCode keeps every provider credential in one auth.json; a profile is one such file. Login makes the profile active first.",
   "shared": [],
   "identity": {
     "jq": "{signedIn: (length > 0), email: \"\", plan: (keys | join(\", \")), expiresAt: null, expired: false}"
   },
   "collector": null,
-  "enabled": true, "verified": "opencode 1.18.31 (auth path from the binary: $XDG_DATA_HOME/opencode/auth.json)"
+  "enabled": true,
+  "verified": "opencode 1.18.31 (auth path from the binary: $XDG_DATA_HOME/opencode/auth.json)"
 }

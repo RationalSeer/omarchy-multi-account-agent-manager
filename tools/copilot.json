@@ -1,11 +1,26 @@
 {
-  "id": "copilot", "name": "Copilot", "bin": "copilot",
-  "mode": "env", "envVar": "COPILOT_HOME", "defaultDir": "~/.copilot",
+  "id": "copilot",
+  "name": "Copilot",
+  "order": 70,
+  "bin": "copilot",
+  "mode": "env",
+  "envVar": "COPILOT_HOME",
+  "defaultDir": "~/.copilot",
   "credFile": "config.json",
-  "login": ["copilot", "login"], "logout": ["copilot", "logout"],
+  "login": [
+    "copilot",
+    "login"
+  ],
+  "logout": [
+    "copilot",
+    "logout"
+  ],
   "loginNote": "Copilot stores its token in the system keyring when one is available, which is shared by all profiles; per-profile isolation only works with the plain-file fallback.",
   "shared": [],
-  "identity": { "jq": "{signedIn: (((.token // .oauth_token // .github_token // \"\") | tostring | length) > 0), email: (.user // .login // \"\"), plan: \"\", expiresAt: null, expired: false}" },
+  "identity": {
+    "jq": "{signedIn: (((.token // .oauth_token // .github_token // \"\") | tostring | length) > 0), email: (.user // .login // \"\"), plan: \"\", expiresAt: null, expired: false}"
+  },
   "collector": null,
-  "enabled": false, "verified": "unverified — COPILOT_HOME seen in the binary; enable by copying this file to ~/.config/agent-accounts/tools/ with \"enabled\": true"
+  "enabled": false,
+  "verified": "unverified — COPILOT_HOME seen in the binary; enable by copying this file to ~/.config/agent-accounts/tools/ with \"enabled\": true"
 }

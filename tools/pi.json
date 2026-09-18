@@ -1,11 +1,21 @@
 {
-  "id": "pi", "name": "Pi", "bin": "pi",
-  "mode": "link", "authPath": "~/.pi/agent/auth.json",
+  "id": "pi",
+  "name": "Pi",
+  "order": 80,
+  "bin": "pi",
+  "mode": "link",
+  "authPath": "~/.pi/agent/auth.json",
   "credFile": "auth.json",
-  "login": ["pi"], "logout": null,
+  "login": [
+    "pi"
+  ],
+  "logout": null,
   "loginNote": "Pi signs in from inside the TUI (/login). Login makes the profile active first.",
   "shared": [],
-  "identity": { "jq": "{signedIn: (length > 0), email: \"\", plan: (keys | join(\", \")), expiresAt: null, expired: false}" },
+  "identity": {
+    "jq": "{signedIn: (length > 0), email: \"\", plan: (keys | join(\", \")), expiresAt: null, expired: false}"
+  },
   "collector": null,
-  "enabled": false, "verified": "unverified — auth.json path per upstream docs; enable via a copy in ~/.config/agent-accounts/tools/"
+  "enabled": false,
+  "verified": "unverified — auth.json path per upstream docs; enable via a copy in ~/.config/agent-accounts/tools/"
 }

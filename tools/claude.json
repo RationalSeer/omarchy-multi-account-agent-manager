@@ -1,13 +1,41 @@
 {
-  "id": "claude", "name": "Claude", "bin": "claude",
-  "mode": "env", "envVar": "CLAUDE_CONFIG_DIR", "defaultDir": "~/.claude",
+  "id": "claude",
+  "name": "Claude",
+  "order": 10,
+  "bin": "claude",
+  "mode": "env",
+  "envVar": "CLAUDE_CONFIG_DIR",
+  "defaultDir": "~/.claude",
   "credFile": ".credentials.json",
-  "login": ["claude", "auth", "login"], "logout": ["claude", "auth", "logout"],
-  "shared": ["settings.json", "skills", "CLAUDE.md", "agents", "commands", "keybindings.json"],
+  "login": [
+    "claude",
+    "auth",
+    "login"
+  ],
+  "logout": [
+    "claude",
+    "auth",
+    "logout"
+  ],
+  "shared": [
+    "settings.json",
+    "skills",
+    "CLAUDE.md",
+    "agents",
+    "commands",
+    "keybindings.json"
+  ],
   "identity": {
     "jq": "{signedIn: ((.claudeAiOauth.accessToken // \"\") | length > 0), email: \"\", plan: (.claudeAiOauth.subscriptionType // \"\"), expiresAt: (.claudeAiOauth.refreshTokenExpiresAt // .claudeAiOauth.expiresAt // null), expired: ((.claudeAiOauth.refreshTokenExpiresAt // .claudeAiOauth.expiresAt // null) as $e | if $e then $e < $now else false end)}",
-    "emailCommand": ["claude", "auth", "status", "--json"], "emailJq": ".email // \"\""
+    "emailCommand": [
+      "claude",
+      "auth",
+      "status",
+      "--json"
+    ],
+    "emailJq": ".email // \"\""
   },
   "collector": "stock:omarchy-agent-usage-claude",
-  "enabled": true, "verified": "Claude Code 2.1.263 on Omarchy 4.0.2"
+  "enabled": true,
+  "verified": "Claude Code 2.1.263 on Omarchy 4.0.2"
 }

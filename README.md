@@ -126,7 +126,7 @@ Drop `~/.config/agent-accounts/tools/<id>.json` (same shape as the files in
 }
 ```
 
-`identity.jq` runs over the credential file with `$now` (ms) bound and must
+`order` sets the tab position (lower first). `identity.jq` runs over the credential file with `$now` (ms) bound and must
 return `{signedIn, email, plan, expiresAt, expired}`. `collector` is
 `stock:<omarchy-agent-usage-…>` for a CLI Omarchy already collects, `local`
 to estimate from session files in `localUsage.dirs`, or `null`. A tool shows
@@ -190,6 +190,6 @@ edits the same values): `agent-acct config alerts warnAt 0.85`,
 
 ## License
 
-MIT. The Claude mark is the one shipped with Omarchy's first-party Agents
-plugin (MIT); the other marks are simple original shapes drawn to be
-reminiscent of each product, not copies of their logos.
+MIT. The Claude and Codex marks are the ones shipped with Omarchy's
+first-party Agents plugin (MIT); the other marks are simple original shapes
+drawn to be reminiscent of each product, not copies of their logos.

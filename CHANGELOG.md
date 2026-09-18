@@ -14,6 +14,8 @@
 - Redrawn provider marks with brand-like shapes and colours (Gemini gradient,
   Codex knot, Cursor cube, Grok X, OpenCode tile).
 - IPC `tab <tool>`.
+- Tools carry an explicit `order` (Claude, Codex, Cursor, Grok, OpenCode,
+  Gemini, then opt-ins); the Codex mark is Omarchy's stock one again.
 
 ## 0.4.0 — 2026-09-18
 

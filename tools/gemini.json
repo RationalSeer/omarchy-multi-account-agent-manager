@@ -1,15 +1,35 @@
 {
-  "id": "gemini", "name": "Gemini", "bin": "gemini",
-  "mode": "env", "envVar": "GEMINI_CLI_HOME", "defaultDir": "~/.gemini",
+  "id": "gemini",
+  "name": "Gemini",
+  "order": 60,
+  "bin": "gemini",
+  "mode": "env",
+  "envVar": "GEMINI_CLI_HOME",
+  "defaultDir": "~/.gemini",
   "credFile": "oauth_creds.json",
-  "login": ["gemini"], "logout": null,
+  "login": [
+    "gemini"
+  ],
+  "logout": null,
   "loginNote": "Gemini CLI signs in on first launch (or /auth inside the TUI); this opens it with the profile's directory.",
-  "shared": ["settings.json", "GEMINI.md", "extensions", "commands"],
+  "shared": [
+    "settings.json",
+    "GEMINI.md",
+    "extensions",
+    "commands"
+  ],
   "identity": {
     "jq": "{signedIn: (((.access_token // .refresh_token // \"\") | tostring | length) > 0), email: \"\", plan: \"\", expiresAt: (.expiry_date // null), expired: false}",
-    "emailFile": "google_accounts.json", "emailJq": ".active // \"\""
+    "emailFile": "google_accounts.json",
+    "emailJq": ".active // \"\""
   },
   "collector": "local",
-  "localUsage": { "dirs": ["~/.gemini/tmp"], "note": "Estimated from local session files." },
-  "enabled": true, "verified": "gemini-cli 0.60.0 (GEMINI_CLI_HOME present in the bundle; credential file names per upstream docs)"
+  "localUsage": {
+    "dirs": [
+      "~/.gemini/tmp"
+    ],
+    "note": "Estimated from local session files."
+  },
+  "enabled": true,
+  "verified": "gemini-cli 0.60.0 (GEMINI_CLI_HOME present in the bundle; credential file names per upstream docs)"
 }

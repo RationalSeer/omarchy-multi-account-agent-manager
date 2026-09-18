@@ -1,15 +1,42 @@
 {
-  "id": "cursor", "name": "Cursor", "bin": "cursor-agent",
-  "mode": "link", "authPath": "${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json",
+  "id": "cursor",
+  "name": "Cursor",
+  "order": 30,
+  "bin": "cursor-agent",
+  "mode": "link",
+  "authPath": "${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json",
   "credFile": "auth.json",
-  "login": ["cursor-agent", "login"], "logout": ["cursor-agent", "logout"],
+  "login": [
+    "cursor-agent",
+    "login"
+  ],
+  "logout": [
+    "cursor-agent",
+    "logout"
+  ],
   "loginNote": "Cursor reads one fixed auth file, so Login makes this profile active first. Switch Cursor with no Cursor session open.",
   "shared": [],
   "identity": {
     "jq": "{signedIn: (((.accessToken // .access_token // .refreshToken // .refresh_token // .apiKey // \"\") | tostring | length) > 0), email: (.email // .user.email // \"\"), plan: (.plan // .membershipType // .user.membershipType // \"\"), expiresAt: null, expired: false}",
-    "emailCommand": ["cursor-agent", "status", "--format", "json"], "emailJq": ".email // .user.email // \"\"", "emailCommandActiveOnly": true
+    "emailCommand": [
+      "cursor-agent",
+      "status",
+      "--format",
+      "json"
+    ],
+    "emailJq": ".email // .user.email // \"\"",
+    "emailCommandActiveOnly": true
   },
   "collector": "local",
-  "localUsage": { "dirs": ["~/.cursor/projects"], "globs": ["**/agent-transcripts/**/*.jsonl"], "note": "Cursor publishes no limits here; usage is estimated from local agent transcripts." },
-  "enabled": true, "verified": "cursor-agent 2026.09.15 (auth path read from the CLI bundle: $XDG_CONFIG_HOME/cursor/auth.json)"
+  "localUsage": {
+    "dirs": [
+      "~/.cursor/projects"
+    ],
+    "globs": [
+      "**/agent-transcripts/**/*.jsonl"
+    ],
+    "note": "Cursor publishes no limits here; usage is estimated from local agent transcripts."
+  },
+  "enabled": true,
+  "verified": "cursor-agent 2026.09.15 (auth path read from the CLI bundle: $XDG_CONFIG_HOME/cursor/auth.json)"
 }

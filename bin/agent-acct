@@ -81,7 +81,7 @@ TOOLS_JSON=$(
     for f in "$PLUGIN_DIR"/tools/*.json; do [[ -f $f ]] && jq -c '. + {source:"plugin"}' "$f"; done
     for f in "$CONF_DIR"/tools/*.json; do [[ -f $f ]] && jq -c '. + {source:"user"}' "$f"; done
     true
-  } 2>/dev/null | jq -s 'reduce .[] as $t ({}; .[$t.id] = ($t + {enabled: (if $t.enabled == null then true else $t.enabled end)})) | [.[]]'
+  } 2>/dev/null | jq -s 'reduce .[] as $t ({}; .[$t.id] = ($t + {enabled: (if $t.enabled == null then true else $t.enabled end)})) | [.[]] | sort_by((.order // 90), .id)'
 )
 tool_def() { jq -c --arg t "$1" '.[] | select(.id == $t)' <<<"$TOOLS_JSON"; }
 tool_field() { tool_def "$1" | jq -r --arg k "$2" '.[$k] // empty'; }
@@ -105,7 +105,7 @@ reg_read() { [[ -f $REG ]] || die "no registry; run: agent-acct init"; cat "$REG
 reg_write() { local tmp; tmp=$(mktemp "$CONF_DIR/.accounts.XXXXXX"); jq . >"$tmp" && mv "$tmp" "$REG"; }
 reg_tool_ids() { # registry tools in definition order, not hidden
   local order; order=$(all_tool_ids | tr '\n' ' ')
-  reg_read | jq -r --arg order "$order" '($order | split(" ")) as $o | .tools | to_entries | map(select(.value.hidden != true)) | map(.key) | sort_by((($o | index(.)) // 99), .) | .[]'
+  reg_read | jq -r --arg order "$order" '($order | split(" ")) as $o | .tools | to_entries | map(select(.value.hidden != true)) | map(.key) | sort_by(. as $k | (($o | index($k)) // 99), $k) | .[]'
 }
 profile_ids() { reg_read | jq -r --arg t "$1" '.tools[$t].profiles // {} | keys[]'; }
 profile_dir() { expand "$(reg_read | jq -r --arg t "$1" --arg p "$2" '.tools[$t].profiles[$p].dir // empty')"; }
