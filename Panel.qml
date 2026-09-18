@@ -52,6 +52,7 @@ Panel {
 
   // ---- panel state: which view, which tool tab ----
   property string view: "accounts"          // "accounts" | "settings"
+  onViewChanged: panelFlick.contentY = 0
   property string selectedToolId: ""
   readonly property int selectedToolIndex: {
     for (var i = 0; i < tools.length; i++) if (tools[i].id === selectedToolId) return i
@@ -340,7 +341,7 @@ Panel {
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(470))
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(root.view === "settings" ? 980 : 640))
-    onOpenChanged: if (open) { root.view = "accounts"; if (root.selectedToolId === "" && root.tools.length) root.selectedToolId = root.tools[0].id }
+    onOpenChanged: if (open) { root.view = "accounts"; panelFlick.contentY = 0; if (root.selectedToolId === "" && root.tools.length) root.selectedToolId = root.tools[0].id }
 
     PanelKeyCatcher {
       id: keyCatcher
