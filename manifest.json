@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.rationalseer.multi-account-agent-manager",
   "name": "Multi-Account Agent Manager",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "author": "RationalSeer",
   "license": "MIT",
   "homepage": "https://github.com/RationalSeer/omarchy-multi-account-agent-manager",

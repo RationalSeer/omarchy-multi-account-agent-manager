@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 — 2026-09-21
+
+- CI: `actions/checkout` pinned to a full commit SHA (marketplace review).
+
 ## 0.6.0 — 2026-09-18
 
 - Accounts can be named anything: Settings → Accounts renames (label +
